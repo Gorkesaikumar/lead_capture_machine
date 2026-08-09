@@ -1,0 +1,27 @@
+--- RAW WEBHOOK EVENTS ---
+Event ID: mid2, Status: PENDING, Channel: INSTAGRAM, Payload: {"entry": [{"id": "PAGE", "time": 2, "messaging": [{"sender": {"id": "USER_B"}, "message": {"mid": "mid2", "text": "I want to book a baby shoot"}, "recipient": {"id": "PAGE"}, "timestamp": 2}]}], "obj
+Event ID: mid1, Status: PENDING, Channel: INSTAGRAM, Payload: {"entry": [{"id": "PAGE", "time": 1, "messaging": [{"sender": {"id": "USER_A"}, "message": {"mid": "mid1", "text": "I want to book a baby shoot"}, "recipient": {"id": "PAGE"}, "timestamp": 1}]}], "obj
+
+--- CUSTOMERS ---
+Customer: 997ff21b-2376-4551-b781-e449333690c7, Name: , Phone: 
+Customer: 0ebe336d-e5fb-46de-bfdc-c171b1505a31, Name: , Phone: 
+
+--- CUSTOMER IDENTITIES ---
+Identity: Customer 997ff21b-2376-4551-b781-e449333690c7, Channel: INSTAGRAM, ExtID: USER_B
+Identity: Customer 0ebe336d-e5fb-46de-bfdc-c171b1505a31, Channel: INSTAGRAM, ExtID: USER_A
+
+--- CONVERSATIONS ---
+Conv: 8ad2a6c0-d425-4507-88f2-cab69553b87d, Customer: 997ff21b-2376-4551-b781-e449333690c7, Channel: INSTAGRAM
+Conv: b493e3b5-acde-4d43-aacb-b2c7bae2ebd8, Customer: 0ebe336d-e5fb-46de-bfdc-c171b1505a31, Channel: INSTAGRAM
+
+--- MESSAGES ---
+Message: aa1feda0-2c77-4d79-8608-eb01d0e9d2f0, Conv: 8ad2a6c0-d425-4507-88f2-cab69553b87d, ExtMsgID: mid2, Text: I want to book a baby shoot
+Message: 769eac92-965b-4d90-977f-ba2bd6c5edb5, Conv: b493e3b5-acde-4d43-aacb-b2c7bae2ebd8, ExtMsgID: mid1, Text: I want to book a baby shoot
+
+--- LEADS ---
+Lead: acbccf72-fe25-41d8-8003-07ba952742d1, Customer: 997ff21b-2376-4551-b781-e449333690c7, Status: NEW, Summary: Inquiry for baby shoot
+Lead: 986efdc1-a281-455e-b9ea-2e53bd83b576, Customer: 0ebe336d-e5fb-46de-bfdc-c171b1505a31, Status: NEW, Summary: Inquiry for baby shoot
+
+--- LEAD ACTIVITIES ---
+Activity: 1c5cc27c-ac1b-45d1-b4e0-5bac762391d2, Lead: acbccf72-fe25-41d8-8003-07ba952742d1, Type: LEAD_CREATED, Desc: Lead automatically created via trigger 'baby shoot' on Instagram
+Activity: ecbaf886-c0ac-4e38-bbe4-fc852ffa5f1f, Lead: 986efdc1-a281-455e-b9ea-2e53bd83b576, Type: LEAD_CREATED, Desc: Lead automatically created via trigger 'baby shoot' on Instagram

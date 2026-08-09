@@ -1,0 +1,23 @@
+# Core Django & REST Framework
+Django>=5.1,<6.2
+djangorestframework>=3.15.0
+django-cors-headers>=4.4.0
+django-filter>=24.2
+
+# Database & Cache
+psycopg[binary]>=3.2.0
+redis>=5.0.0
+django-redis>=5.4.0
+
+# Celery & Asynchronous Tasks
+celery>=5.4.0
+django-celery-beat>=2.7.0
+django-celery-results>=2.5.1
+
+# Environment & Configuration
+python-dotenv>=1.0.1
+
+# Utilities
+python-dateutil>=2.9.0
+requests>=2.32.0
+tzdata>=2024.1
