@@ -10,7 +10,7 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # Load .env file
-load_dotenv(BASE_DIR / ".env", override=True)
+load_dotenv(BASE_DIR / ".env", override=False)
 
 SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:

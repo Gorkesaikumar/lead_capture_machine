@@ -11,7 +11,7 @@ def main():
     base_dir = Path(__file__).resolve().parent
     env_path = base_dir / ".env"
     if env_path.exists():
-        load_dotenv(dotenv_path=env_path, override=True)
+        load_dotenv(dotenv_path=env_path, override=False)
 
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.local")
     try:
