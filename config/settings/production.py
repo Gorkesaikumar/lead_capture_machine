@@ -42,8 +42,6 @@ required_vars = [
     "META_APP_ID",
     "META_APP_SECRET",
     "META_VERIFY_TOKEN",
-    "WHATSAPP_PHONE_NUMBER_ID",
-    "WHATSAPP_ACCESS_TOKEN",
 ]
 
 import sys
