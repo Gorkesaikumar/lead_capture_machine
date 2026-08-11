@@ -49,13 +49,9 @@ missing_vars = [var for var in required_vars if not os.getenv(var)]
 if missing_vars and not any(cmd in sys.argv for cmd in ["check_config", "check"]):
     raise ImproperlyConfigured(f"Missing required environment variables in production: {', '.join(missing_vars)}")
 
-# Enable database connection pooling natively via psycopg 3
+# Disable connection pooling since psycopg_pool is not installed.
+# We set CONN_MAX_AGE to 0 to ensure clean connections for Celery.
 if "default" in DATABASES:
-    # Psycopg 3 connection pooling doesn't support persistent connections
     DATABASES["default"]["CONN_MAX_AGE"] = 0
     DATABASES["default"].setdefault("OPTIONS", {})
-    DATABASES["default"]["OPTIONS"]["pool"] = {
-        "min_size": 2,
-        "max_size": 20,
-        "timeout": 10,
-    }
+    # Keep the connect_timeout option from base.py without overriding with a pool.
