@@ -51,6 +51,8 @@ if missing_vars and not any(cmd in sys.argv for cmd in ["check_config", "check"]
 
 # Enable database connection pooling natively via psycopg 3
 if "default" in DATABASES:
+    # Psycopg 3 connection pooling doesn't support persistent connections
+    DATABASES["default"]["CONN_MAX_AGE"] = 0
     DATABASES["default"].setdefault("OPTIONS", {})
     DATABASES["default"]["OPTIONS"]["pool"] = {
         "min_size": 2,
