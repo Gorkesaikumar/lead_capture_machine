@@ -52,7 +52,7 @@ def ig_start(owner):
 
 def ig_get(url, **kwargs):
     if url.endswith("/permissions"):
-        return response({"data": [{"permission": p, "status": "granted"} for p in service.SCOPES["INSTAGRAM"]]})
+        return response({"error": {"code": 100}}, 400)
     if url.endswith("/access_token"):
         return response({"access_token": "long-token", "expires_in": 5184000})
     return response({"user_id": "90001", "username": "studio"})
@@ -114,7 +114,7 @@ def test_instagram_verified_success_encrypted_single_use(owner):
 @pytest.mark.parametrize("failure", ["permission_required", "token_exchange_failed", "webhook_subscription_failed", "no_instagram_account"])
 def test_instagram_failures_do_not_activate(owner, failure):
     def get(url, **kwargs):
-        if failure == "permission_required" and url.endswith("/permissions"): return response({"data": []})
+        if failure == "permission_required" and url.endswith("/90001"): return response({"error": {"code": 10}}, 400)
         if failure == "no_instagram_account" and url.endswith("/90001"): return response({"id": "90001"})
         return ig_get(url, **kwargs)
     def post(url, **kwargs):

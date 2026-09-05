@@ -186,22 +186,39 @@ def instagram_connect(organization, code, redirect_uri, user=None):
         "client_id": app_id, "client_secret": secret, "grant_type": "authorization_code", "redirect_uri": redirect_uri, "code": code})
     if isinstance(data.get("data"), list) and data["data"]:
         data = data["data"][0]
-    if not data.get("access_token") or not data.get("user_id"):
+    if not isinstance(data, dict) or not isinstance(data.get("access_token"), str) or not data["access_token"].strip():
         raise OAuthFailure("token_exchange_failed")
-    token, account = data["access_token"], str(data["user_id"])
+    account = str(data.get("user_id") or "")
+    if not re.fullmatch(r"[1-9]\d{0,31}", account):
+        raise OAuthFailure("no_instagram_account")
+    token = data["access_token"]
     base = graph_base("INSTAGRAM")
-    permissions = meta_request("get", f"{base}/{account}/permissions", token)
-    scopes = [r["permission"] for r in permissions.get("data", []) if r.get("status") == "granted" and r.get("permission")]
-    require_scopes(scopes, "INSTAGRAM")
+    # Instagram Login must not depend on the Facebook-style user permissions edge.
+    # Check grants when returned by the token exchange; absence is not proof of grants.
+    scopes = []
+    if "permissions" in data:
+        permissions = data["permissions"]
+        if isinstance(permissions, str):
+            permissions = [scope.strip() for scope in permissions.split(",") if scope.strip()]
+        if not isinstance(permissions, list) or any(not isinstance(scope, str) for scope in permissions):
+            raise OAuthFailure("permission_required")
+        require_scopes(permissions, "INSTAGRAM")
+        scopes = permissions
     long_lived = meta_request("get", "https://graph.instagram.com/access_token", failure="token_exchange_failed",
         params={"grant_type": "ig_exchange_token", "client_secret": secret, "access_token": token})
-    if not long_lived.get("access_token") or not long_lived.get("expires_in"):
+    if not isinstance(long_lived.get("access_token"), str) or not long_lived["access_token"].strip():
         raise OAuthFailure("token_exchange_failed")
+    try:
+        lifetime = long_lived.get("expires_in")
+        if isinstance(lifetime, bool) or not isinstance(lifetime, (int, str)) or int(lifetime) <= 0:
+            raise ValueError
+        expires = timezone.now()+timedelta(seconds=int(lifetime))
+    except (ValueError, TypeError, OverflowError):
+        raise OAuthFailure("token_exchange_failed") from None
     token = long_lived["access_token"]
     profile = meta_request("get", f"{base}/{account}", token, failure="no_instagram_account", params={"fields": "user_id,username,name,profile_picture_url"})
-    if not profile.get("username") or str(profile.get("user_id") or profile.get("id")) != account:
+    if not isinstance(profile.get("username"), str) or not profile["username"].strip() or str(profile.get("user_id") or profile.get("id")) != account:
         raise OAuthFailure("no_instagram_account")
-    expires = timezone.now()+timedelta(seconds=int(long_lived["expires_in"]))
     with transaction.atomic():
         list(IntegrationConfig.objects.select_for_update().filter(organization=organization, provider="INSTAGRAM"))
         Organization.objects.select_for_update().get(pk=organization.pk)
@@ -213,6 +230,8 @@ def instagram_connect(organization, code, redirect_uri, user=None):
         return save_connection(organization, user, "INSTAGRAM", token, {
             "destination_id": account, "account_id": account, "username": profile["username"], "name": profile.get("name", ""),
             "profile_picture_url": profile.get("profile_picture_url", ""), "scopes": scopes,
+            "requested_scopes": list(SCOPES["INSTAGRAM"]),
+            "scopes_source": "token_response" if "permissions" in data else "not_returned",
             "token_expires_at": expires.isoformat(), "auth_architecture": "instagram_login"})
 
 

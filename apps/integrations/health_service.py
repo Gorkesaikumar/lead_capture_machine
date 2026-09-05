@@ -34,10 +34,9 @@ def verify_integration(config_id):
             profile = meta_request("get", f"{base}/{account}", token, params={"fields": "user_id,username"})
             if not profile.get("username") or str(profile.get("user_id") or profile.get("id")) != account:
                 raise OAuthFailure("no_instagram_account")
-            permissions = meta_request("get", f"{base}/{account}/permissions", token)
-            scopes = [r["permission"] for r in permissions.get("data", []) if r.get("status") == "granted" and r.get("permission")]
-            require_scopes(scopes, "INSTAGRAM")
-            updates.update(username=profile["username"], scopes=scopes)
+            # Verify current account/subscription access without the unsupported
+            # permissions edge. Do not fabricate or overwrite recorded OAuth grants.
+            updates.update(username=profile["username"])
             asset = account
         else:
             app_id, secret = app_credentials("WHATSAPP")
