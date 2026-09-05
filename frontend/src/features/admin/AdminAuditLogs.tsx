@@ -1,10 +1,13 @@
+import { ErrorState } from "@/components/common/states/ErrorState";
 import { useAdminAuditLogs } from "@/api/admin.queries";
 import { ShieldCheck, User, Calendar, Terminal } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 export default function AdminAuditLogs() {
-  const { data: logs = [], isLoading } = useAdminAuditLogs();
+  const { data: logs = [], isLoading, isError, refetch } = useAdminAuditLogs();
+
+  if (isError) return <ErrorState title="Unable to load auditlogs" message="Data is unavailable. Please retry." onRetry={refetch} />;
 
   if (isLoading) {
     return (

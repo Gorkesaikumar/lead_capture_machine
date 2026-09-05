@@ -1,6 +1,18 @@
 import { Link } from 'react-router-dom';
 
-export default function Footer() {
+export default function Footer({ legal = false }: { legal?: boolean }) {
+  if (legal) return (
+    <footer className="border-t border-slate-200 bg-white px-6 py-8 text-sm text-slate-600">
+      <div className="mx-auto flex max-w-6xl flex-col justify-between gap-5 sm:flex-row sm:items-center">
+        <div><p className="font-semibold text-slate-900">Nextora Creations</p><p className="mt-1">Operator of Nextora Lead Capture Machine</p><p className="mt-2 text-xs">© {new Date().getFullYear()} Nextora Creations. All rights reserved.</p></div>
+        <nav aria-label="Legal footer" className="flex flex-wrap gap-5">
+          <Link to="/" className="hover:text-primary underline underline-offset-4">Home</Link>
+          <a href="#contact" className="hover:text-primary underline underline-offset-4">Privacy contact</a>
+          <a href="#data-deletion" className="hover:text-primary underline underline-offset-4">Data deletion</a>
+        </nav>
+      </div>
+    </footer>
+  );
   return (
     <footer className="bg-white border-t border-outline-variant/20 py-[80px] px-margin-mobile md:px-margin-desktop text-body-sm text-on-surface-variant" id="resources">
       <div className="max-w-8xl mx-auto">
@@ -54,7 +66,7 @@ export default function Footer() {
           <div>
             <h4 className="font-semibold text-on-surface text-body-sm mb-sm">Legal</h4>
             <ul className="space-y-sm">
-              <li><Link to="#" className="hover:text-primary transition-colors">Privacy Policy</Link></li>
+              <li><Link to="/privacy-policy" className="hover:text-primary transition-colors">Privacy Policy</Link></li>
               <li><Link to="#" className="hover:text-primary transition-colors">Terms of Service</Link></li>
             </ul>
           </div>

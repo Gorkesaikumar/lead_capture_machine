@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 from django.db.models import Case, Count, F, FloatField, Q, Sum, Value, When
 from django.utils import timezone
 from apps.bookings.models import Booking
-from apps.leads.models import Lead
+from apps.leads.models import Lead, LeadActivity, LeadForm
 from apps.services.models import PhotographyService
 
 logger = logging.getLogger("apps.analytics")
@@ -35,7 +35,7 @@ class AnalyticsDateRange:
         Parses query parameters into a validated date range.
         Supports presets: 'today', 'yesterday', '7d', '30d', 'this_month', 'last_month', 'this_year', 'all_time'.
         """
-        now = timezone.now()
+        now = timezone.localtime()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1) - timedelta(microseconds=1)
 
@@ -135,26 +135,75 @@ class AnalyticsService:
             "popular_services": popular_services,
             "timeseries": timeseries,
             "leads_timeseries": leads_timeseries,
+            "channels": cls.get_channels(organization, leads_metrics),
+            "recent_leads": cls.get_recent_leads(date_range, organization),
+            "activities": cls.get_activities(date_range, organization),
+            "generated_at": timezone.now().isoformat(),
+            "timezone": timezone.get_current_timezone_name(),
         }
+
+    @staticmethod
+    def _in_period(queryset, date_range):
+        if date_range.start_datetime:
+            queryset = queryset.filter(created_at__gte=date_range.start_datetime)
+        if date_range.end_datetime:
+            queryset = queryset.filter(created_at__lte=date_range.end_datetime)
+        return queryset
+
+    @classmethod
+    def get_recent_leads(cls, date_range, organization):
+        from apps.leads.serializers import LeadListSerializer
+        leads = cls._in_period(Lead.objects.filter(organization=organization, is_deleted=False), date_range)
+        return LeadListSerializer(leads.select_related("customer", "service", "assigned_staff", "trigger__service").order_by("-created_at", "-id")[:5], many=True).data
+
+    @classmethod
+    def get_activities(cls, date_range, organization):
+        activities = cls._in_period(LeadActivity.objects.filter(
+            lead__organization=organization, lead__is_deleted=False,
+        ), date_range).select_related("lead__customer").order_by("-created_at", "-id")[:5]
+        return [{
+            "id": str(item.id), "lead_id": str(item.lead_id),
+            "type": item.lead.source_channel.lower(),
+            "title": item.get_activity_type_display(),
+            "subtitle": item.lead.customer.display_name,
+            "created_at": item.created_at.isoformat(),
+        } for item in activities]
+
+    @staticmethod
+    def get_channels(organization, metrics):
+        # Read the same persisted connection state as the Channels screen; no
+        # provider calls or token refreshes are performed by dashboard polling.
+        from apps.integrations.models import IntegrationConfig
+        from apps.conversations.outbound import configuration_status
+        configs = {c.provider: c for c in IntegrationConfig.objects.filter(organization=organization)}
+        result = []
+        for provider, name in (("INSTAGRAM", "Instagram Direct"), ("WHATSAPP", "WhatsApp Business")):
+            state, _ = configuration_status(configs.get(provider))
+            result.append({"id": provider.lower(), "name": name, "type": provider.lower(),
+                           "status": state, "leadCount": metrics[f"{provider.lower()}_leads"]})
+        result.append({"id": "website", "name": "Website Forms", "type": "website",
+                       "status": "ACTIVE" if LeadForm.objects.filter(organization=organization, is_active=True, is_deleted=False).exists() else "NOT_CONFIGURED",
+                       "leadCount": metrics["website_leads"]})
+        return result
 
     @classmethod
     def get_leads_metrics(cls, date_range: AnalyticsDateRange, organization) -> Dict[str, Any]:
         """
         Aggregates lead volume, channel counts, qualification counts, and conversion rate.
         """
-        qs = Lead.objects.filter(organization=organization)
+        qs = Lead.objects.filter(organization=organization, is_deleted=False)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
             qs = qs.filter(created_at__lte=date_range.end_datetime)
 
-        now = timezone.now()
+        now = timezone.localtime()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
 
         # Open Conversations
         open_conversations = Conversation.objects.filter(
-            organization=organization,
+            organization=organization, is_deleted=False,
             status=Conversation.Status.ACTIVE
         ).count()
 
@@ -219,13 +268,13 @@ class AnalyticsService:
         """
         Aggregates booking volume, calendar day metrics, and statuses.
         """
-        qs = Booking.objects.filter(customer__organization=organization)
+        qs = Booking.objects.filter(customer__organization=organization, is_deleted=False)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
             qs = qs.filter(created_at__lte=date_range.end_datetime)
 
-        now = timezone.now()
+        now = timezone.localtime()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
         tomorrow_start = today_end
@@ -275,7 +324,7 @@ class AnalyticsService:
         """
         Groups leads by source channel (Instagram / WhatsApp / Website) and computes conversion by source.
         """
-        qs = Lead.objects.filter(organization=organization)
+        qs = Lead.objects.filter(organization=organization, is_deleted=False)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -338,7 +387,7 @@ class AnalyticsService:
         """
         Ranks photography services by active bookings and completed sessions.
         """
-        qs = Booking.objects.filter(customer__organization=organization).exclude(status=Booking.Status.CANCELLED)
+        qs = Booking.objects.filter(customer__organization=organization, is_deleted=False).exclude(status=Booking.Status.CANCELLED)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -380,7 +429,7 @@ class AnalyticsService:
     @classmethod
     def get_bookings_timeseries(cls, date_range: AnalyticsDateRange, organization) -> List[Dict[str, Any]]:
         from django.db.models.functions import TruncDate
-        qs = Booking.objects.filter(customer__organization=organization)
+        qs = Booking.objects.filter(customer__organization=organization, is_deleted=False)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -412,7 +461,7 @@ class AnalyticsService:
     @classmethod
     def get_leads_timeseries(cls, date_range: AnalyticsDateRange, organization) -> List[Dict[str, Any]]:
         from django.db.models.functions import TruncDate
-        qs = Lead.objects.filter(organization=organization)
+        qs = Lead.objects.filter(organization=organization, is_deleted=False)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -423,7 +472,11 @@ class AnalyticsService:
             .values('date')
             .annotate(
                 total=Count('id'),
-                converted=Count('id', filter=Q(status=Lead.Status.CONVERTED))
+                converted=Count('id', filter=Q(status=Lead.Status.CONVERTED)),
+                instagram=Count('id', filter=Q(source_channel="INSTAGRAM")),
+                whatsapp=Count('id', filter=Q(source_channel="WHATSAPP")),
+                website=Count('id', filter=Q(source_channel="WEBSITE")),
+                other=Count('id', filter=~Q(source_channel__in=["INSTAGRAM", "WHATSAPP", "WEBSITE"])),
             )
             .order_by('date')
         )
@@ -436,5 +489,19 @@ class AnalyticsService:
                 "date": row['date'].isoformat(),
                 "total": row['total'],
                 "converted": row['converted'],
+                "instagram": row['instagram'],
+                "whatsapp": row['whatsapp'],
+                "website": row['website'],
+                "other": row['other'],
             })
+        if date_range.start_datetime and date_range.end_datetime:
+            first = timezone.localtime(date_range.start_datetime).date()
+            last = timezone.localtime(date_range.end_datetime).date()
+            if 0 <= (last - first).days <= 366:
+                by_date = {row["date"]: row for row in results}
+                results = [by_date.get((first + timedelta(days=day)).isoformat(), {
+                    "date": (first + timedelta(days=day)).isoformat(),
+                    "total": 0, "converted": 0, "instagram": 0,
+                    "whatsapp": 0, "website": 0, "other": 0,
+                }) for day in range((last - first).days + 1)]
         return results

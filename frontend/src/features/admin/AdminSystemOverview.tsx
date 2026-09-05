@@ -1,9 +1,12 @@
+import { ErrorState } from "@/components/common/states/ErrorState";
 import { useAdminSystem } from "@/api/admin.queries";
-import { Activity, ShieldCheck } from "lucide-react";
+import { Activity, Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 export default function AdminSystemOverview() {
-  const { data, isLoading } = useAdminSystem();
+  const { data, isLoading, isError, refetch } = useAdminSystem();
+
+  if (isError) return <ErrorState title="Unable to load systemoverview" message="Data is unavailable. Please retry." onRetry={refetch} />;
 
   if (isLoading) {
     return (
@@ -49,10 +52,10 @@ export default function AdminSystemOverview() {
 
         <Card className="bg-white border-slate-200/80 shadow-sm rounded-2xl p-5">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">System Status</span>
-          <div className="text-3xl font-black text-emerald-600 mt-2 flex items-center gap-2">
-            <ShieldCheck className="h-7 w-7 text-emerald-600" /> Operational
+          <div className="text-xl font-black text-slate-600 mt-2 flex items-center gap-2">
+            <Info className="h-7 w-7 text-slate-500" /> Not monitored
           </div>
-          <div className="text-xs text-slate-500 font-medium mt-1">PostgreSQL & Redis Healthy</div>
+          <div className="text-xs text-slate-500 font-medium mt-1">Infrastructure health is not measured by this dashboard.</div>
         </Card>
       </div>
 

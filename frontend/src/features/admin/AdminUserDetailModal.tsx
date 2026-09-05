@@ -1,3 +1,4 @@
+import { ErrorState } from "@/components/common/states/ErrorState";
 import { useState } from "react";
 import {
   useAdminUserDetail,
@@ -35,13 +36,14 @@ export default function AdminUserDetailModal({
   isOpen,
   onClose,
 }: AdminUserDetailModalProps) {
-  const { data, isLoading, refetch } = useAdminUserDetail(userId || undefined);
+  const { data, isLoading, isError, refetch } = useAdminUserDetail(userId || undefined);
   const actionMutation = useAdminUserAction();
 
   const [confirmAction, setConfirmAction] = useState<string | null>(null);
   const [selectedPlanCode, setSelectedPlanCode] = useState("starter");
 
   if (!isOpen || !userId) return null;
+  if (isError) return <Dialog open={isOpen} onOpenChange={onClose}><DialogContent><DialogHeader><DialogTitle>User data unavailable</DialogTitle></DialogHeader><ErrorState title="Could not load user" message="Please retry to view saved account information." onRetry={refetch} /></DialogContent></Dialog>;
 
   const user = data?.user;
   const org = data?.organization;
@@ -84,7 +86,7 @@ export default function AdminUserDetailModal({
                 : "bg-rose-50 text-rose-700 border-rose-200"
             }`}
           >
-            {user?.is_active ? "Active Account" : "Suspended"}
+            {isLoading ? "Loading account" : user?.is_active ? "Active Account" : "Suspended"}
           </Badge>
         </DialogHeader>
 
@@ -119,10 +121,10 @@ export default function AdminUserDetailModal({
                       onChange={(e) => setSelectedPlanCode(e.target.value)}
                       className="bg-white border border-slate-300 text-xs font-bold text-slate-900 rounded-lg p-2"
                     >
-                      <option value="free">Free (10 Leads)</option>
-                      <option value="starter">Starter (100 Leads)</option>
-                      <option value="creator">Creator (300 Leads)</option>
-                      <option value="enterprise">Enterprise (1000 Leads)</option>
+                      <option value="free">Free</option>
+                      <option value="starter">Starter</option>
+                      <option value="creator">Creator</option>
+                      <option value="enterprise">Enterprise</option>
                     </select>
                   </div>
                 )}
@@ -168,7 +170,7 @@ export default function AdminUserDetailModal({
                 <div className="text-sm font-bold text-slate-900">{org?.name || "None"}</div>
                 <div className="text-xs text-slate-500 font-medium">Slug: {org?.slug || "N/A"}</div>
                 <div className="text-[11px] text-slate-400">
-                  Team Members: {org?.members?.length || 1} registered
+                  Team Members: {org?.members?.length ?? "Unavailable"} registered
                 </div>
               </div>
             </div>
@@ -205,9 +207,9 @@ export default function AdminUserDetailModal({
                   </div>
                 </div>
                 <div>
-                  <span className="text-slate-500 font-medium">Auto Renewal:</span>
+                  <span className="text-slate-500 font-medium">Cancel at period end:</span>
                   <div className="font-bold text-slate-900 mt-0.5">
-                    {sub?.cancel_at_period_end ? "Cancelling" : "Active"}
+                    {sub ? (sub.cancel_at_period_end ? "Yes" : "No") : "Unavailable"}
                   </div>
                 </div>
               </div>
@@ -219,7 +221,7 @@ export default function AdminUserDetailModal({
                     <Zap className="h-3.5 w-3.5 text-amber-500" /> Combined Lead Quota
                   </span>
                   <span className="text-slate-900">
-                    {usage?.total_used || 0} / {usage?.lead_limit || 10} Leads ({usage?.usage_percentage || 0}%)
+                    {usage?.total_used || 0} / {usage?.lead_limit ?? "Unavailable"} Leads ({usage?.usage_percentage || 0}%)
                   </span>
                 </div>
                 <div className="h-3 w-full bg-slate-200/80 rounded-full overflow-hidden p-0.5 border border-slate-200">
@@ -243,7 +245,7 @@ export default function AdminUserDetailModal({
               </h4>
               {payments.length === 0 ? (
                 <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500 text-center font-medium">
-                  No billing transactions recorded. User is on Free tier.
+                  No billing transactions recorded.
                 </div>
               ) : (
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -261,7 +263,7 @@ export default function AdminUserDetailModal({
                         <tr key={tx.id}>
                           <td className="p-3 font-mono text-slate-900 font-semibold">{tx.transaction_id}</td>
                           <td className="p-3 font-bold text-emerald-700">
-                            {tx.currency === "INR" ? "₹" : "$"}{tx.amount_usd}
+                            {tx.currency} {tx.amount}
                           </td>
                           <td className="p-3">
                             <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] capitalize font-bold">

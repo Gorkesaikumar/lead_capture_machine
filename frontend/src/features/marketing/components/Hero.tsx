@@ -74,17 +74,17 @@ export default function Hero() {
             <SourceCard
               icon={<InstagramIcon />}
               label="Instagram"
-              sub="3 New DMs"
+              sub="Customer DMs"
             />
             <SourceCard
               icon={<WhatsAppIcon />}
               label="WhatsApp"
-              sub="5 New Msgs"
+              sub="Business messages"
             />
             <SourceCard
               icon={<WebIcon />}
               label="Website"
-              sub="2 Form Fills"
+              sub="Form submissions"
             />
           </div>
 
@@ -104,14 +104,14 @@ export default function Hero() {
                 Unified Inbox
               </div>
               <span className="bg-secondary-fixed-dim text-on-secondary-container px-3 py-1 rounded-md text-label-md whitespace-nowrap shadow-sm">
-                10 New Leads
+                Your workspace
               </span>
             </div>
             {/* Leads */}
             <div className="p-3 sm:p-6 flex flex-col gap-sm bg-surface-container-low">
-              <InboxRow name="Sarah Jenkins" preview='"Interested in pricing..."' channel="IG" />
-              <InboxRow name="Mike Torres"   preview='"Do you offer services in..."' channel="WA" />
-              <InboxRow name="Emma Collins"  preview="Form Submitted" channel="Web" muted />
+              <InboxRow name="Instagram inquiries" preview="Manage messages from your connected account" channel="IG" />
+              <InboxRow name="WhatsApp conversations" preview="Follow up with your customers" channel="WA" />
+              <InboxRow name="Website inquiries" preview="Review submitted contact details" channel="Web" muted />
             </div>
           </div>
 

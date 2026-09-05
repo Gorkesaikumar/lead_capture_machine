@@ -66,6 +66,31 @@ class TimeseriesItemSerializer(serializers.Serializer):
     cancelled = serializers.IntegerField(required=False)
     converted = serializers.IntegerField(required=False)
 
+
+class LeadTimeseriesItemSerializer(TimeseriesItemSerializer):
+    instagram = serializers.IntegerField()
+    whatsapp = serializers.IntegerField()
+    website = serializers.IntegerField()
+    other = serializers.IntegerField()
+
+
+class DashboardChannelSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.CharField()
+    status = serializers.CharField()
+    leadCount = serializers.IntegerField()
+
+
+class DashboardActivitySerializer(serializers.Serializer):
+    id = serializers.CharField()
+    lead_id = serializers.CharField()
+    type = serializers.CharField()
+    title = serializers.CharField()
+    subtitle = serializers.CharField(allow_blank=True)
+    created_at = serializers.CharField()
+
+
 class DashboardSummarySerializer(serializers.Serializer):
     date_range = DateRangeInfoSerializer()
     leads = LeadsMetricsSerializer()
@@ -73,5 +98,10 @@ class DashboardSummarySerializer(serializers.Serializer):
     lead_source_breakdown = SourceBreakdownItemSerializer(many=True)
     popular_services = PopularServiceItemSerializer(many=True)
     timeseries = TimeseriesItemSerializer(many=True)
-    leads_timeseries = TimeseriesItemSerializer(many=True)
+    leads_timeseries = LeadTimeseriesItemSerializer(many=True)
+    channels = DashboardChannelSerializer(many=True)
+    recent_leads = serializers.ListField(child=serializers.DictField())
+    activities = DashboardActivitySerializer(many=True)
+    generated_at = serializers.CharField()
+    timezone = serializers.CharField()
 

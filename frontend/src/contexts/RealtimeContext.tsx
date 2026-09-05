@@ -86,6 +86,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ["conversations", payload.conversation_id, "messages"] });
         }
         queryClient.invalidateQueries({ queryKey: ["leads"] });
+        queryClient.invalidateQueries({ queryKey: ["analytics"] });
+        queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
 
         // If inbound message, notify admin
         if (payload.direction === "INBOUND") {
@@ -102,14 +104,18 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ["conversations", payload.conversation_id, "messages"] });
         }
         queryClient.invalidateQueries({ queryKey: ["leads"] });
+        queryClient.invalidateQueries({ queryKey: ["analytics"] });
+        queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
         break;
       }
 
       case "NEW_LEAD": {
         const payload = event.payload || {};
         queryClient.invalidateQueries({ queryKey: ["leads"] });
+        queryClient.invalidateQueries({ queryKey: ["analytics"] });
+        queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
         toast.success("New Lead Detected!", {
-          description: `${payload.customer_name || "Instagram User"} inquired about ${payload.service_name || "Photography Session"}.`,
+          description: payload.customer_name ? `New inquiry from ${payload.customer_name}${payload.service_name ? ` about ${payload.service_name}` : ""}.` : "A new lead was captured in this workspace.",
         });
         break;
       }
@@ -121,6 +127,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
           queryClient.invalidateQueries({ queryKey: ["leads", "detail", payload.id] });
         }
         queryClient.invalidateQueries({ queryKey: ["leads"] });
+        queryClient.invalidateQueries({ queryKey: ["analytics"] });
+        queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
         break;
       }
 
@@ -128,6 +136,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
         const payload = event.payload || {};
         queryClient.invalidateQueries({ queryKey: ["bookings"] });
         queryClient.invalidateQueries({ queryKey: ["leads"] });
+        queryClient.invalidateQueries({ queryKey: ["analytics"] });
+        queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
         toast.success("Booking Confirmed!", {
           description: `Booking #${payload.reference_id || ""} confirmed for ${payload.customer_name || "Customer"}.`,
         });
@@ -135,6 +145,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       }
 
       case "BOOKING_UPDATED": {
+        queryClient.invalidateQueries({ queryKey: ["analytics"] });
         queryClient.invalidateQueries({ queryKey: ["bookings"] });
         break;
       }

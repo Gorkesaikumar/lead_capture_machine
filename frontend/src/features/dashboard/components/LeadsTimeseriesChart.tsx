@@ -1,44 +1,11 @@
-import { useState } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { format, parseISO, isValid } from "date-fns";
 
 export function LeadsTimeseriesChart({ data }: { data: any[] }) {
-  const [dateFilter, setDateFilter] = useState("This Month");
-
-  const sampleChartData = [
-    { date: "May 1", instagram: 170, whatsapp: 100, website: 50 },
-    { date: "May 6", instagram: 280, whatsapp: 170, website: 75 },
-    { date: "May 11", instagram: 330, whatsapp: 200, website: 70 },
-    { date: "May 16", instagram: 320, whatsapp: 170, website: 110 },
-    { date: "May 21", instagram: 360, whatsapp: 230, website: 80 },
-    { date: "May 26", instagram: 310, whatsapp: 230, website: 140 },
-    { date: "May 31", instagram: 330, whatsapp: 210, website: 130 },
-  ];
-
-  const chartData =
-    data && data.length > 0
-      ? data.map((item, idx) => {
-          let dateStr = `Day ${idx + 1}`;
-          if (item.date) {
-            try {
-              const parsed = parseISO(item.date);
-              if (isValid(parsed)) {
-                dateStr = format(parsed, "MMM d");
-              }
-            } catch {
-              dateStr = item.date;
-            }
-          }
-
-          const total = item.total || item.leads || 0;
-          return {
-            date: dateStr,
-            instagram: item.instagram || Math.round(total * 0.45) || 12,
-            whatsapp: item.whatsapp || Math.round(total * 0.35) || 8,
-            website: item.website || Math.round(total * 0.20) || 4,
-          };
-        })
-      : sampleChartData;
+  const chartData = data.map((item) => ({
+    ...item,
+    date: isValid(parseISO(item.date)) ? format(parseISO(item.date), "MMM d") : item.date,
+  }));
 
   return (
     <div className="rounded-2xl bg-white p-5 border border-slate-200/80 shadow-2xs">
@@ -62,24 +29,15 @@ export function LeadsTimeseriesChart({ data }: { data: any[] }) {
             <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
             <span>Website</span>
           </div>
+          <div className="flex items-center gap-1.5 text-slate-600"><span className="h-2.5 w-2.5 rounded-full bg-slate-500" /><span>Other</span></div>
 
-          {/* Date Selector Dropdown */}
-          <select
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-            className="ml-auto sm:ml-2 px-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-700 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-rose-500/20 cursor-pointer shadow-2xs"
-          >
-            <option value="This Month">This Month</option>
-            <option value="Last 30 Days">Last 30 Days</option>
-            <option value="Last 7 Days">Last 7 Days</option>
-            <option value="Today">Today</option>
-          </select>
+
         </div>
       </div>
 
       {/* Recharts Curved Area Chart */}
       <div className="h-[280px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
+        {chartData.length === 0 ? <p className="text-sm text-slate-500 py-12 text-center">No leads in this period.</p> : <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             data={chartData}
             margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
@@ -107,7 +65,7 @@ export function LeadsTimeseriesChart({ data }: { data: any[] }) {
               tick={{ fill: "#94a3b8", fontSize: 11, fontWeight: 500 }}
               dy={10}
             />
-            <YAxis
+            <YAxis allowDecimals={false}
               axisLine={false}
               tickLine={false}
               tick={{ fill: "#94a3b8", fontSize: 11, fontWeight: 500 }}
@@ -123,7 +81,7 @@ export function LeadsTimeseriesChart({ data }: { data: any[] }) {
               }}
             />
 
-            <Area
+            <Area isAnimationActive={false}
               type="monotone"
               dataKey="instagram"
               name="Instagram"
@@ -134,7 +92,7 @@ export function LeadsTimeseriesChart({ data }: { data: any[] }) {
               dot={{ r: 3, fill: "#f43f5e", strokeWidth: 2, stroke: "#fff" }}
               activeDot={{ r: 6, strokeWidth: 0 }}
             />
-            <Area
+            <Area isAnimationActive={false}
               type="monotone"
               dataKey="whatsapp"
               name="WhatsApp"
@@ -145,7 +103,7 @@ export function LeadsTimeseriesChart({ data }: { data: any[] }) {
               dot={{ r: 3, fill: "#10b981", strokeWidth: 2, stroke: "#fff" }}
               activeDot={{ r: 6, strokeWidth: 0 }}
             />
-            <Area
+            <Area isAnimationActive={false}
               type="monotone"
               dataKey="website"
               name="Website"
@@ -156,8 +114,9 @@ export function LeadsTimeseriesChart({ data }: { data: any[] }) {
               dot={{ r: 3, fill: "#f59e0b", strokeWidth: 2, stroke: "#fff" }}
               activeDot={{ r: 6, strokeWidth: 0 }}
             />
+            <Area isAnimationActive={false} type="monotone" dataKey="other" name="Other" stroke="#64748b" fill="transparent" />
           </AreaChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer>}
       </div>
     </div>
   );

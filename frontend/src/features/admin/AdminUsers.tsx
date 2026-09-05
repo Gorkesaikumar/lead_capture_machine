@@ -1,3 +1,4 @@
+import { ErrorState } from "@/components/common/states/ErrorState";
 import { useState } from "react";
 import { useAdminUsers } from "@/api/admin.queries";
 import {
@@ -21,7 +22,7 @@ export default function AdminUsers() {
   const [page, setPage] = useState(1);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
-  const { data, isLoading, refetch } = useAdminUsers({
+  const { data, isLoading, isError, refetch } = useAdminUsers({
     search,
     plan: planFilter,
     status: statusFilter,
@@ -31,6 +32,8 @@ export default function AdminUsers() {
   const users = data?.results || [];
   const totalCount = data?.count || 0;
   const totalPages = Math.ceil(totalCount / 20) || 1;
+
+  if (isError) return <ErrorState title="Unable to load users" message="Data is unavailable. Please retry." onRetry={refetch} />;
 
   return (
     <div className="space-y-6 animate-in fade-in">

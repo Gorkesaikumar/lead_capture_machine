@@ -6,39 +6,15 @@ export interface ChannelStatusItem {
   id: string;
   name: string;
   type: "instagram" | "whatsapp" | "website";
-  status: "Connected" | "Active" | "Disconnected";
+  status: string;
   leadCount: number;
 }
 
 interface ChannelStatusCardProps {
-  channels?: ChannelStatusItem[];
+  channels: ChannelStatusItem[];
 }
 
-const DEFAULT_CHANNELS: ChannelStatusItem[] = [
-  {
-    id: "ig",
-    name: "Instagram Direct",
-    type: "instagram",
-    status: "Connected",
-    leadCount: 128,
-  },
-  {
-    id: "wa",
-    name: "WhatsApp Business",
-    type: "whatsapp",
-    status: "Connected",
-    leadCount: 842,
-  },
-  {
-    id: "web",
-    name: "Website Forms",
-    type: "website",
-    status: "Active",
-    leadCount: 278,
-  },
-];
-
-export function ChannelStatusCard({ channels = DEFAULT_CHANNELS }: ChannelStatusCardProps) {
+export function ChannelStatusCard({ channels }: ChannelStatusCardProps) {
   return (
     <div className="rounded-2xl bg-white p-5 border border-slate-200/80 shadow-2xs flex flex-col justify-between h-full">
       {/* Card Header */}
@@ -87,13 +63,13 @@ export function ChannelStatusCard({ channels = DEFAULT_CHANNELS }: ChannelStatus
                   <span
                     className={cn(
                       "h-1.5 w-1.5 rounded-full",
-                      channel.status === "Connected" || channel.status === "Active"
+                      channel.status === "CONNECTED" || channel.status === "ACTIVE"
                         ? "bg-emerald-500 animate-pulse"
                         : "bg-slate-300"
                     )}
                   />
                   <span className="text-[11px] font-medium text-slate-500">
-                    {channel.status}
+                    {channel.status.toLowerCase().replaceAll("_", " ")}
                   </span>
                 </div>
               </div>

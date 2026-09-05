@@ -1,58 +1,29 @@
+import { formatDistanceToNow, parseISO } from "date-fns";
 import { Link } from "react-router-dom";
 import { MessageSquare, Globe, UserPlus, ArrowUpRight } from "lucide-react";
 import { cn } from "@/utils/cn";
 
 export interface ActivityItem {
   id: string;
-  type: "whatsapp" | "instagram" | "website" | "team";
+  type: string;
   title: string;
   subtitle: string;
-  timeAgo: string;
+  created_at: string;
+  lead_id: string;
 }
-
-const DEFAULT_ACTIVITIES: ActivityItem[] = [
-  {
-    id: "act-1",
-    type: "whatsapp",
-    title: "New lead captured from WhatsApp",
-    subtitle: "Rohan Mehta",
-    timeAgo: "2m ago",
-  },
-  {
-    id: "act-2",
-    type: "instagram",
-    title: "New lead captured from Instagram",
-    subtitle: "Sarah Jenkins",
-    timeAgo: "5m ago",
-  },
-  {
-    id: "act-3",
-    type: "website",
-    title: "New form submission received",
-    subtitle: "Contact Form - Home Page",
-    timeAgo: "12m ago",
-  },
-  {
-    id: "act-4",
-    type: "team",
-    title: "Team member assigned a lead",
-    subtitle: "Priya Kapoor assigned to Amit Singh",
-    timeAgo: "18m ago",
-  },
-];
 
 interface ActivityFeedCardProps {
-  activities?: ActivityItem[];
+  activities: ActivityItem[];
 }
 
-export function ActivityFeedCard({ activities = DEFAULT_ACTIVITIES }: ActivityFeedCardProps) {
+export function ActivityFeedCard({ activities }: ActivityFeedCardProps) {
   return (
     <div className="rounded-2xl bg-white p-5 border border-slate-200/80 shadow-2xs flex flex-col justify-between h-full">
       {/* Card Header */}
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-base font-bold text-slate-900">Activity Feed</h3>
         <Link
-          to="/app/conversations"
+          to="/app/leads"
           className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50/70 hover:bg-rose-100/70 px-2.5 py-1 rounded-lg transition-colors"
         >
           View All
@@ -62,6 +33,7 @@ export function ActivityFeedCard({ activities = DEFAULT_ACTIVITIES }: ActivityFe
 
       {/* Activity Items */}
       <div className="space-y-3 flex-1 flex flex-col justify-around">
+        {activities.length === 0 && <p className="text-sm text-slate-500 py-6">No recorded lead activity in this period.</p>}
         {activities.map((item) => (
           <div
             key={item.id}
@@ -91,7 +63,7 @@ export function ActivityFeedCard({ activities = DEFAULT_ACTIVITIES }: ActivityFe
               {/* Title & Subtitle */}
               <div>
                 <h4 className="text-xs font-bold text-slate-900 leading-tight">
-                  {item.title}
+                  <Link to={`/app/leads/${item.lead_id}`}>{item.title}</Link>
                 </h4>
                 <p className="text-[11px] font-medium text-slate-500 leading-tight mt-0.5">
                   {item.subtitle}
@@ -101,7 +73,7 @@ export function ActivityFeedCard({ activities = DEFAULT_ACTIVITIES }: ActivityFe
 
             {/* Time Ago */}
             <span className="text-[11px] font-semibold text-slate-400 shrink-0 mt-0.5">
-              {item.timeAgo}
+              {formatDistanceToNow(parseISO(item.created_at), { addSuffix: true })}
             </span>
           </div>
         ))}

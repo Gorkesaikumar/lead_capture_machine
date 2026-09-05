@@ -1,3 +1,4 @@
+import { ErrorState } from "@/components/common/states/ErrorState";
 import { useState } from "react";
 import {
   useAdminSubscriptionPlans,
@@ -24,7 +25,7 @@ import {
 import { toast } from "sonner";
 
 export default function AdminSubscriptions() {
-  const { data: plans = [], isLoading, refetch } = useAdminSubscriptionPlans();
+  const { data: plans = [], isLoading, isError, refetch } = useAdminSubscriptionPlans();
   const updateMutation = useUpdateAdminPlanConfig();
 
   const [editingPlan, setEditingPlan] = useState<any | null>(null);
@@ -84,6 +85,8 @@ export default function AdminSubscriptions() {
       toast.error(err.response?.data?.detail || "Failed to update plan configuration.");
     }
   };
+
+  if (isError) return <ErrorState title="Unable to load subscriptions" message="Data is unavailable. Please retry." onRetry={refetch} />;
 
   if (isLoading) {
     return (

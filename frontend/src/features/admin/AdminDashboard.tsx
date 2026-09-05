@@ -1,3 +1,4 @@
+import { formatCurrencyTotals } from "@/utils/money";
 import { useState } from "react";
 import {
   useAdminKPIs,
@@ -48,7 +49,7 @@ export default function AdminDashboard() {
     {
       title: "Total Registered Users",
       value: kpis?.total_users ?? 0,
-      subtext: `${kpis?.user_growth_pct ?? 0}% growth vs prev period`,
+      subtext: kpis?.user_growth_pct == null ? "No previous-period baseline" : `${kpis.user_growth_pct}% growth vs prev period`,
       icon: Users,
       color: "text-blue-600",
       bg: "bg-blue-50 border-blue-100",
@@ -64,7 +65,7 @@ export default function AdminDashboard() {
     {
       title: "Active Starter Users",
       value: kpis?.starter_users ?? 0,
-      subtext: "$5 / ₹400 per month tier",
+      subtext: "Active subscriptions in this tier",
       icon: CreditCard,
       color: "text-indigo-600",
       bg: "bg-indigo-50 border-indigo-100",
@@ -72,7 +73,7 @@ export default function AdminDashboard() {
     {
       title: "Active Creator Users",
       value: kpis?.creator_users ?? 0,
-      subtext: "$19 / ₹1,500 per month tier",
+      subtext: "Active subscriptions in this tier",
       icon: Crown,
       color: "text-pink-600",
       bg: "bg-pink-50 border-pink-100",
@@ -80,22 +81,22 @@ export default function AdminDashboard() {
     {
       title: "Active Enterprise Users",
       value: kpis?.enterprise_users ?? 0,
-      subtext: "$99 / ₹8,000 per month tier",
+      subtext: "Active subscriptions in this tier",
       icon: Sparkles,
       color: "text-purple-600",
       bg: "bg-purple-50 border-purple-100",
     },
     {
-      title: "Monthly Recurring Revenue (MRR)",
+      title: "Monthly Plan Value (USD catalog)",
       value: `$${Number(kpis?.mrr_usd || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
-      subtext: "Calculated from active subscriptions",
+      subtext: "Current plan prices; excludes add-ons and discounts",
       icon: DollarSign,
       color: "text-emerald-600",
       bg: "bg-emerald-50 border-emerald-100",
     },
     {
       title: "Total Revenue Collected",
-      value: `$${Number(kpis?.total_revenue_usd || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}`,
+      value: formatCurrencyTotals(kpis?.revenue_by_currency),
       subtext: "Sum of successful transactions",
       icon: TrendingUp,
       color: "text-amber-600",
@@ -196,18 +197,13 @@ export default function AdminDashboard() {
 
             <div className="space-y-4">
               <div className="flex justify-between items-center text-xs font-bold text-slate-600">
-                <span>Revenue Trend ($ USD)</span>
-                <span className="text-emerald-600 font-extrabold">${kpis?.total_revenue_usd || 0} Total</span>
+                <span>Recorded revenue by date and currency</span>
+                <span className="text-emerald-600 font-extrabold">{formatCurrencyTotals(kpis?.revenue_by_currency)}</span>
               </div>
-              <div className="h-36 flex items-end gap-1.5 pt-4 border-b border-slate-100 pb-2 overflow-x-auto">
-                {(analytics?.revenue_growth || []).slice(-15).map((point: any, i: number) => (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-1 group">
-                    <div
-                      className="w-full bg-gradient-to-t from-emerald-500 to-teal-500 rounded-t-sm transition-all group-hover:brightness-110"
-                      style={{ height: `${Math.max(12, Number(point.amount) * 3)}px` }}
-                    />
-                    <span className="text-[9px] text-slate-400 font-semibold">{point.date.slice(5)}</span>
-                  </div>
+              <div className="h-36 overflow-auto space-y-2 text-xs">
+                {!analytics?.revenue_growth?.length && <p className="text-slate-500">No payments in this period.</p>}
+                {(analytics?.revenue_growth || []).slice(-15).map((point: any) => (
+                  <div key={`${point.date}-${point.currency}`} className="flex justify-between gap-4"><span>{point.date}</span><span>{point.currency} {point.amount}</span></div>
                 ))}
               </div>
             </div>
@@ -222,7 +218,7 @@ export default function AdminDashboard() {
                 <PieIcon className="h-5 w-5 text-indigo-600" /> Plan Distribution
               </CardTitle>
               <CardDescription className="text-xs text-slate-500 mt-0.5 font-medium">
-                Active user plan breakdown
+                Active subscription breakdown
               </CardDescription>
             </CardHeader>
 
@@ -232,7 +228,7 @@ export default function AdminDashboard() {
                   <div className="flex justify-between text-xs font-bold">
                     <span className="text-slate-900 capitalize">{item.plan_name} Plan</span>
                     <span className="text-slate-500">
-                      {item.count} users ({item.percentage}%)
+                      {item.count} subscriptions ({item.percentage}%)
                     </span>
                   </div>
                   <div className="h-2.5 w-full bg-slate-100 rounded-full overflow-hidden p-0.5 border border-slate-200">
@@ -246,7 +242,7 @@ export default function AdminDashboard() {
                           ? "bg-pink-600"
                           : "bg-purple-600"
                       }`}
-                      style={{ width: `${Math.max(5, item.percentage)}%` }}
+                      style={{ width: `${Math.max(0, Math.min(100, item.percentage))}%` }}
                     />
                   </div>
                 </div>

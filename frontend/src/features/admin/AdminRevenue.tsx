@@ -1,3 +1,5 @@
+import { formatCurrencyTotals } from "@/utils/money";
+import { ErrorState } from "@/components/common/states/ErrorState";
 import { useState } from "react";
 import { useAdminRevenue } from "@/api/admin.queries";
 import {
@@ -14,10 +16,12 @@ export default function AdminRevenue() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
 
-  const { data, isLoading } = useAdminRevenue({ search, status: statusFilter });
+  const { data, isLoading, isError, refetch } = useAdminRevenue({ search, status: statusFilter });
 
   const summary = data?.summary;
   const ledger = data?.ledger || [];
+
+  if (isError) return <ErrorState title="Unable to load revenue" message="Data is unavailable. Please retry." onRetry={refetch} />;
 
   if (isLoading) {
     return (
@@ -46,7 +50,7 @@ export default function AdminRevenue() {
         <Card className="bg-white border-slate-200/80 shadow-sm rounded-2xl p-6">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Today's Revenue</span>
           <div className="text-3xl font-black text-emerald-600 mt-2">
-            ${summary?.today_revenue_usd || "0.00"}
+            {formatCurrencyTotals(summary?.by_currency?.today)}
           </div>
           <p className="text-[11px] text-slate-500 mt-1 font-medium">Verified payments collected today</p>
         </Card>
@@ -54,7 +58,7 @@ export default function AdminRevenue() {
         <Card className="bg-white border-slate-200/80 shadow-sm rounded-2xl p-6">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">This Month's Revenue</span>
           <div className="text-3xl font-black text-slate-900 mt-2">
-            ${summary?.month_revenue_usd || "0.00"}
+            {formatCurrencyTotals(summary?.by_currency?.month)}
           </div>
           <p className="text-[11px] text-slate-500 mt-1 font-medium">Current calendar month total</p>
         </Card>
@@ -62,7 +66,7 @@ export default function AdminRevenue() {
         <Card className="bg-white border-slate-200/80 shadow-sm rounded-2xl p-6">
           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">All-Time Total Revenue</span>
           <div className="text-3xl font-black text-amber-600 mt-2">
-            ${summary?.total_revenue_usd || "0.00"}
+            {formatCurrencyTotals(summary?.by_currency?.total)}
           </div>
           <p className="text-[11px] text-slate-500 mt-1 font-medium">Sum of all successful gateway transactions</p>
         </Card>
@@ -82,18 +86,18 @@ export default function AdminRevenue() {
         <CardContent className="p-0 pt-6">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <div className="text-xs font-extrabold text-indigo-600 uppercase">Starter Tier ($5)</div>
-              <div className="text-2xl font-black text-slate-900 mt-1">${summary?.starter_revenue_usd || "0.00"}</div>
+              <div className="text-xs font-extrabold text-indigo-600 uppercase">Starter Tier</div>
+              <div className="text-2xl font-black text-slate-900 mt-1">{formatCurrencyTotals(summary?.by_currency?.starter)}</div>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <div className="text-xs font-extrabold text-pink-600 uppercase">Creator Tier ($19)</div>
-              <div className="text-2xl font-black text-slate-900 mt-1">${summary?.creator_revenue_usd || "0.00"}</div>
+              <div className="text-xs font-extrabold text-pink-600 uppercase">Creator Tier</div>
+              <div className="text-2xl font-black text-slate-900 mt-1">{formatCurrencyTotals(summary?.by_currency?.creator)}</div>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <div className="text-xs font-extrabold text-purple-600 uppercase">Enterprise Tier ($99)</div>
-              <div className="text-2xl font-black text-slate-900 mt-1">${summary?.enterprise_revenue_usd || "0.00"}</div>
+              <div className="text-xs font-extrabold text-purple-600 uppercase">Enterprise Tier</div>
+              <div className="text-2xl font-black text-slate-900 mt-1">{formatCurrencyTotals(summary?.by_currency?.enterprise)}</div>
             </div>
           </div>
         </CardContent>
@@ -145,8 +149,7 @@ export default function AdminRevenue() {
                   <th className="p-3.5">Transaction ID</th>
                   <th className="p-3.5">Organization</th>
                   <th className="p-3.5">Plan</th>
-                  <th className="p-3.5">Amount (USD)</th>
-                  <th className="p-3.5">Amount (INR)</th>
+                  <th className="p-3.5">Amount</th>
                   <th className="p-3.5">Gateway</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5 text-right">Date</th>
@@ -158,8 +161,7 @@ export default function AdminRevenue() {
                     <td className="p-3.5 font-mono text-slate-900 font-semibold">{tx.transaction_id}</td>
                     <td className="p-3.5 font-bold text-slate-900">{tx.organization_name}</td>
                     <td className="p-3.5 font-semibold text-slate-700">{tx.plan_name}</td>
-                    <td className="p-3.5 font-bold text-emerald-700">${tx.amount_usd}</td>
-                    <td className="p-3.5 font-semibold text-rose-600">₹{tx.amount_inr}</td>
+                    <td className="p-3.5 font-bold text-emerald-700">{tx.currency} {tx.amount}</td>
                     <td className="p-3.5 text-slate-500 font-medium">{tx.payment_provider}</td>
                     <td className="p-3.5">
                       <Badge

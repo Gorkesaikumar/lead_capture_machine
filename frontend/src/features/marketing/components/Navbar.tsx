@@ -12,8 +12,17 @@ const NAV_LINKS = [
   { label: 'Resources',    href: '#resources' },
 ];
 
-export default function Navbar() {
+export default function Navbar({ legal = false }: { legal?: boolean }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  if (legal) return (
+    <header className="border-b border-slate-200 bg-white">
+      <nav aria-label="Privacy page navigation" className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6 sm:px-8">
+        <Link to="/" aria-label="Nextora home"><img src="/lead.png" alt="Nextora" className="h-14 w-auto object-contain" /></Link>
+        <Link to="/" className="text-sm font-semibold text-slate-700 hover:text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4">Back to home <span aria-hidden="true">↗</span></Link>
+      </nav>
+    </header>
+  );
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-outline-variant/30 bg-surface/80 backdrop-blur-xl">

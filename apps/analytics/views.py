@@ -14,6 +14,22 @@ from apps.analytics.serializers import (
 )
 from apps.analytics.services import AnalyticsDateRange, AnalyticsService
 from apps.organizations.permissions import IsOrganizationMember
+from functools import wraps
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from django.utils import timezone
+
+
+def organization_timezone(view):
+    @wraps(view)
+    def wrapped(self, request, *args, **kwargs):
+        organization = getattr(request, "organization", None)
+        try:
+            zone = ZoneInfo(getattr(organization, "timezone", None) or "UTC")
+        except (ZoneInfoNotFoundError, ValueError):
+            zone = ZoneInfo("UTC")
+        with timezone.override(zone):
+            return view(self, request, *args, **kwargs)
+    return wrapped
 
 
 class DashboardSummaryAPIView(APIView):
@@ -24,6 +40,7 @@ class DashboardSummaryAPIView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
+    @organization_timezone
     def get(self, request, *args, **kwargs):
         if not hasattr(request, "organization") or not request.organization:
             raise PermissionDenied("An active organization context is required.")
@@ -45,6 +62,7 @@ class LeadsAnalyticsAPIView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
+    @organization_timezone
     def get(self, request, *args, **kwargs):
         if not hasattr(request, "organization") or not request.organization:
             raise PermissionDenied("An active organization context is required.")
@@ -78,6 +96,7 @@ class BookingsAnalyticsAPIView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
+    @organization_timezone
     def get(self, request, *args, **kwargs):
         if not hasattr(request, "organization") or not request.organization:
             raise PermissionDenied("An active organization context is required.")
@@ -109,6 +128,7 @@ class ServicesAnalyticsAPIView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
+    @organization_timezone
     def get(self, request, *args, **kwargs):
         if not hasattr(request, "organization") or not request.organization:
             raise PermissionDenied("An active organization context is required.")

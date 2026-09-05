@@ -19,25 +19,21 @@ const COLOR_SCHEMES = {
     bg: "bg-rose-50/80",
     text: "text-rose-600",
     border: "border-rose-100",
-    sparkline: "#f43f5e",
   },
   green: {
     bg: "bg-emerald-50/80",
     text: "text-emerald-600",
     border: "border-emerald-100",
-    sparkline: "#10b981",
   },
   orange: {
     bg: "bg-amber-50/80",
     text: "text-amber-600",
     border: "border-amber-100",
-    sparkline: "#f59e0b",
   },
   purple: {
     bg: "bg-purple-50/80",
     text: "text-purple-600",
     border: "border-purple-100",
-    sparkline: "#8b5cf6",
   },
 };
 
@@ -66,26 +62,7 @@ export function DashboardKpiCard({
           <Icon className="h-5 w-5" />
         </div>
 
-        {/* Embedded SVG Sparkline */}
-        <div className="w-20 h-9 opacity-80 group-hover:opacity-100 transition-opacity">
-          <svg viewBox="0 0 100 35" className="w-full h-full overflow-visible">
-            <path
-              d={
-                colorScheme === "pink"
-                  ? "M0,25 Q20,30 40,15 T80,10 T100,5"
-                  : colorScheme === "green"
-                  ? "M0,28 Q25,32 50,18 T80,8 T100,3"
-                  : colorScheme === "orange"
-                  ? "M0,20 Q30,35 60,15 T90,20 T100,10"
-                  : "M0,30 Q20,10 40,25 T70,12 T100,5"
-              }
-              fill="none"
-              stroke={scheme.sparkline}
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
+
       </div>
 
       {/* Middle Section: Value & Title */}

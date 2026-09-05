@@ -40,7 +40,7 @@ export default function SubscriptionPage() {
 
   const { data: subData, isLoading: subLoading, error: subError, refetch: refetchSub } = useCurrentSubscription();
   const { data: plansData, isLoading: plansLoading, error: plansError, refetch: refetchPlans } = usePlans(selectedCountry);
-  const { data: billingHistory = [] } = useBillingHistory();
+  const { data: billingHistory = [], isLoading: historyLoading, isError: historyError, refetch: refetchHistory } = useBillingHistory();
 
   const checkoutMutation = useCheckout();
   const verifyPaymentMutation = useVerifyPayment();
@@ -51,7 +51,7 @@ export default function SubscriptionPage() {
     return <LoadingSkeleton rows={6} />;
   }
 
-  if (subError || plansError || !subData) {
+  if (subError || plansError || !subData?.plan || !subData?.usage) {
     return (
       <ErrorState
         code="internal_server_error"
@@ -69,10 +69,10 @@ export default function SubscriptionPage() {
   const plans = plansData?.plans || [];
   const currencySymbol = selectedCountry === "IN" ? "₹" : "$";
 
-  const totalUsed = usage?.total_leads_count || 0;
-  const leadLimit = currentPlan?.lead_limit || 100;
-  const leadsRemaining = usage?.leads_remaining ?? Math.max(0, leadLimit - totalUsed);
-  const usagePct = usage?.usage_percentage ?? Math.min(100, Math.round((totalUsed / leadLimit) * 100));
+  const totalUsed = usage.total_leads_count;
+  const leadLimit = currentPlan.lead_limit;
+  const leadsRemaining = usage.leads_remaining;
+  const usagePct = usage.usage_percentage;
 
   const isWarning = usagePct >= 80 && usagePct < 100;
   const isCritical = usagePct >= 100;
@@ -530,7 +530,7 @@ export default function SubscriptionPage() {
           <ShieldCheck className="h-5 w-5 text-slate-600" /> Billing Transaction History
         </h3>
 
-        {billingHistory.length === 0 ? (
+        {historyError ? <ErrorState title="Billing history unavailable" message="Could not load transactions. Please retry." onRetry={refetchHistory} /> : historyLoading ? <LoadingSkeleton rows={2} /> : billingHistory.length === 0 ? (
           <p className="text-xs text-slate-500 py-4 italic">No prior billing transactions recorded.</p>
         ) : (
           <div className="overflow-x-auto">

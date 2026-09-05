@@ -3,13 +3,14 @@ import { apiClient } from "./client";
 
 export interface AdminKPIs {
   total_users: number;
-  user_growth_pct: number;
+  user_growth_pct: number | null;
   free_plan_users: number;
   free_plan_pct: number;
   starter_users: number;
   creator_users: number;
   enterprise_users: number;
   mrr_usd: string;
+  revenue_by_currency: Record<string, string>;
   total_revenue_usd: string;
   active_subscriptions: number;
   conversion_rate: number;

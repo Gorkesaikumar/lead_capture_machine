@@ -5,45 +5,15 @@ import { cn } from "@/utils/cn";
 
 interface Lead {
   id: string;
-  name: string;
-  source: string;
-  status: string;
-  assigned_to_name?: string;
+  customer: { display_name: string; email?: string };
+  source_channel: string;
+  summary?: string;
   created_at: string;
-  email?: string;
-  notes?: string;
 }
-
-const SAMPLE_LEADS: Lead[] = [
-  {
-    id: "lead-1",
-    name: "Sarah Jenkins",
-    source: "Instagram",
-    status: "New",
-    notes: "Interested in pricing",
-    created_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "lead-2",
-    name: "Rohan Mehta",
-    source: "WhatsApp",
-    status: "Contacted",
-    notes: "Looking for demo",
-    created_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-  },
-  {
-    id: "lead-3",
-    name: "Priya Kapoor",
-    source: "Website",
-    status: "Qualified",
-    notes: "Contact form submission",
-    created_at: new Date(Date.now() - 32 * 60 * 1000).toISOString(),
-  },
-];
 
 export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
   const navigate = useNavigate();
-  const displayLeads = leads && leads.length > 0 ? leads.slice(0, 5) : SAMPLE_LEADS;
+  const displayLeads = leads.slice(0, 5);
 
   const getInitials = (name: string) => {
     if (!name) return "L";
@@ -82,7 +52,7 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
     }
     return (
       <span className="bg-amber-100/90 text-amber-700 border border-amber-200/60 font-semibold px-2.5 py-0.5 rounded-full text-[11px]">
-        Website
+        {src === "website" ? "Website" : source || "Unknown source"}
       </span>
     );
   };
@@ -98,7 +68,7 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
     } catch {
       // ignore
     }
-    return "just now";
+    return "Time unavailable";
   };
 
   return (
@@ -117,6 +87,7 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
 
       {/* Leads List */}
       <div className="space-y-3 flex-1 flex flex-col justify-around">
+        {displayLeads.length === 0 && <p className="text-sm text-slate-500 py-6">No leads in this period.</p>}
         {displayLeads.map((lead, idx) => (
           <div
             key={lead.id}
@@ -131,22 +102,22 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
                   getAvatarColor(idx)
                 )}
               >
-                {getInitials(lead.name)}
+                {getInitials(lead.customer.display_name)}
               </div>
 
               <div className="min-w-0">
                 <h4 className="text-xs font-bold text-slate-900 group-hover:text-rose-600 transition-colors truncate">
-                  {lead.name}
+                  {lead.customer.display_name}
                 </h4>
                 <p className="text-[11px] font-medium text-slate-500 truncate max-w-[160px] sm:max-w-[200px]">
-                  {lead.notes || lead.email || "New lead inquiry"}
+                  {lead.summary || lead.customer.email || "No summary provided"}
                 </p>
               </div>
             </div>
 
             {/* Source, Time & Action */}
             <div className="flex items-center gap-3 shrink-0">
-              {getSourceBadge(lead.source)}
+              {getSourceBadge(lead.source_channel)}
 
               <span className="text-[11px] font-semibold text-slate-400 hidden sm:inline">
                 {formatTime(lead.created_at)}

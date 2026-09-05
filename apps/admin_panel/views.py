@@ -15,6 +15,17 @@ from apps.subscriptions.services import SubscriptionEntitlementService, Currency
 from apps.leads.models import Lead
 
 
+def currency_totals(queryset):
+    """Keep actual ledger currencies separate; never invent an exchange rate."""
+    return {row["currency"]: str(row["total"]) for row in
+            queryset.order_by().values("currency").annotate(total=Sum("amount"))}
+
+
+def usage_percentage(usage, plan):
+    limit = plan.lead_limit
+    return min(100.0, round(usage.total_leads_count / limit * 100, 1)) if limit > 0 else 0
+
+
 def get_client_ip(request):
     x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
     if x_forwarded_for:
@@ -45,7 +56,7 @@ class AdminKPIsView(APIView):
         if prev_period_users > 0:
             user_growth_pct = round(((recent_users - prev_period_users) / prev_period_users) * 100, 1)
         elif recent_users > 0:
-            user_growth_pct = 100.0
+            user_growth_pct = None
 
         # Subscriptions Breakdown
         active_subs = Subscription.objects.select_related("plan").filter(status=Subscription.Status.ACTIVE)
@@ -64,14 +75,9 @@ class AdminKPIsView(APIView):
         for sub in active_subs.exclude(plan__code=Plan.Code.FREE):
             mrr_usd += sub.plan.price_usd
 
-        # Total Revenue from verified successful transactions (convert INR to USD if applicable)
         successful_txs = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS)
-        total_rev_usd = Decimal("0.00")
-        for tx in successful_txs:
-            if tx.currency == "INR":
-                total_rev_usd += (tx.amount / Decimal("80.00"))
-            else:
-                total_rev_usd += tx.amount
+        revenue_by_currency = currency_totals(successful_txs)
+        total_rev_usd = Decimal(revenue_by_currency.get("USD", "0.00"))
 
         # Active paid subscriptions count
         active_paid_subscriptions = paid_users
@@ -89,6 +95,7 @@ class AdminKPIsView(APIView):
             "enterprise_users": enterprise_users,
             "mrr_usd": str(mrr_usd.quantize(Decimal("0.01"))),
             "total_revenue_usd": str(total_rev_usd.quantize(Decimal("0.01"))),
+            "revenue_by_currency": revenue_by_currency,
             "active_subscriptions": active_paid_subscriptions,
             "conversion_rate": conversion_rate,
         })
@@ -126,9 +133,10 @@ class AdminAnalyticsView(APIView):
         revenue_map = {}
         for tx in txs:
             d_str = tx.created_at.strftime("%Y-%m-%d")
-            revenue_map[d_str] = revenue_map.get(d_str, Decimal("0.00")) + (tx.amount or Decimal("0.00"))
+            key = (d_str, tx.currency)
+            revenue_map[key] = revenue_map.get(key, Decimal("0.00")) + tx.amount
 
-        revenue_growth = [{"date": k, "amount": str(v)} for k, v in sorted(revenue_map.items())]
+        revenue_growth = [{"date": k[0], "currency": k[1], "amount": str(v)} for k, v in sorted(revenue_map.items())]
 
         # 3. Subscription Distribution
         active_subs = Subscription.objects.select_related("plan").filter(status=Subscription.Status.ACTIVE)
@@ -229,7 +237,7 @@ class AdminUsersView(APIView):
                 usage_info = {
                     "total_used": usage.total_leads_count,
                     "lead_limit": sub.plan.lead_limit,
-                    "usage_percentage": usage.usage_percentage,
+                    "usage_percentage": usage_percentage(usage, sub.plan),
                 }
 
             results.append({
@@ -296,15 +304,16 @@ class AdminUserDetailView(APIView):
                 "website_count": usage.website_lead_count,
                 "total_used": usage.total_leads_count,
                 "lead_limit": sub.plan.lead_limit,
-                "usage_percentage": usage.usage_percentage,
+                "usage_percentage": usage_percentage(usage, sub.plan),
             }
 
             for tx in BillingTransaction.objects.filter(subscription=sub).order_by("-created_at"):
                 tx_history.append({
                     "id": str(tx.id),
                     "transaction_id": tx.provider_payment_id or str(tx.id)[:8],
-                    "amount_usd": str(tx.amount),
-                    "amount_inr": str(tx.amount),
+                    "amount": str(tx.amount),
+                    "amount_usd": str(tx.amount) if tx.currency == "USD" else None,
+                    "amount_inr": str(tx.amount) if tx.currency == "INR" else None,
                     "currency": tx.currency,
                     "status": tx.status,
                     "created_at": tx.created_at.isoformat(),
@@ -589,13 +598,14 @@ class AdminRevenueView(APIView):
                 Q(provider_order_id__icontains=search)
             )
 
-        total_rev = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-        today_rev = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS, created_at__date=today).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-        month_rev = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS, created_at__month=now.month, created_at__year=now.year).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-
-        starter_rev = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS, subscription__plan__code=Plan.Code.STARTER).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-        creator_rev = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS, subscription__plan__code=Plan.Code.CREATOR).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
-        enterprise_rev = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS, subscription__plan__code=Plan.Code.ENTERPRISE).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+        successful = BillingTransaction.objects.filter(status=BillingTransaction.Status.SUCCESS)
+        totals = {
+            "total": currency_totals(successful),
+            "today": currency_totals(successful.filter(created_at__date=today)),
+            "month": currency_totals(successful.filter(created_at__month=now.month, created_at__year=now.year)),
+        }
+        for code in (Plan.Code.STARTER, Plan.Code.CREATOR, Plan.Code.ENTERPRISE):
+            totals[code] = currency_totals(successful.filter(subscription__plan__code=code))
 
         ledger = []
         for tx in txs[:50]:
@@ -604,22 +614,19 @@ class AdminRevenueView(APIView):
                 "transaction_id": tx.provider_payment_id or str(tx.id)[:8],
                 "organization_name": tx.subscription.organization.name if tx.subscription and tx.subscription.organization else "N/A",
                 "plan_name": tx.subscription.plan.name if tx.subscription and tx.subscription.plan else "N/A",
-                "amount_usd": str(tx.amount),
-                "amount_inr": str(tx.amount),
+                "amount": str(tx.amount),
+                "amount_usd": str(tx.amount) if tx.currency == "USD" else None,
+                "amount_inr": str(tx.amount) if tx.currency == "INR" else None,
                 "currency": tx.currency,
                 "status": tx.status,
-                "payment_provider": tx.provider.capitalize() if tx.provider else "Razorpay",
+                "payment_provider": tx.provider.capitalize() if tx.provider else "Not recorded",
                 "created_at": tx.created_at.isoformat(),
             })
 
         return Response({
             "summary": {
-                "total_revenue_usd": str(total_rev),
-                "today_revenue_usd": str(today_rev),
-                "month_revenue_usd": str(month_rev),
-                "starter_revenue_usd": str(starter_rev),
-                "creator_revenue_usd": str(creator_rev),
-                "enterprise_revenue_usd": str(enterprise_rev),
+                "by_currency": totals,
+                **{f"{key}_revenue_usd": values.get("USD", "0.00") for key, values in totals.items()},
             },
             "ledger": ledger,
         })

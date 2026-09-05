@@ -2,7 +2,6 @@ import { useState } from "react";
 import { isAxiosError } from "axios";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDashboardSummary } from "@/api/analytics.queries";
-import { useLeadsList } from "@/api/leads.queries";
 import { useCurrentSubscription } from "@/api/subscriptions.queries";
 import { PageContainer } from "@/components/common/layout/PageContainer";
 import { ErrorState } from "@/components/common/states/ErrorState";
@@ -13,7 +12,6 @@ import { LeadsTimeseriesChart } from "./components/LeadsTimeseriesChart";
 import { ChannelStatusCard } from "./components/ChannelStatusCard";
 import { RecentLeadsTable } from "./components/RecentLeadsTable";
 import { ActivityFeedCard } from "./components/ActivityFeedCard";
-import { DashboardEmptyState } from "./components/DashboardEmptyState";
 import { Button } from "@/components/ui/button";
 
 export default function Overview() {
@@ -21,7 +19,7 @@ export default function Overview() {
   const [preset, setPreset] = useState("this_month");
 
   // Fetch Subscription & Quota status
-  const { data: subData } = useCurrentSubscription();
+  const { data: subData, isError: isSubscriptionError } = useCurrentSubscription();
 
   // Fetch Dashboard Summary
   const {
@@ -32,10 +30,7 @@ export default function Overview() {
     refetch: refetchSummary,
   } = useDashboardSummary(preset);
 
-  // Fetch Recent Leads (top 5)
-  const { data: leadsData, isLoading: isLeadsLoading } = useLeadsList({ limit: "5" });
-
-  const isLoading = isSummaryLoading || isLeadsLoading;
+  const isLoading = isSummaryLoading;
 
   if (isSummaryError) {
     const status = isAxiosError(summaryError) ? summaryError.response?.status : undefined;
@@ -62,47 +57,23 @@ export default function Overview() {
     return "Good evening";
   };
 
-  const userName = user?.name || "Admin";
+  const userName = user?.full_name || user?.name || user?.email;
 
-  const totalLeadsCount = subData?.usage?.total_leads_count ?? 0;
-  const leadLimit = subData?.plan?.lead_limit ?? 100;
-  const usagePct = subData?.usage?.usage_percentage ?? Math.min(100, Math.round((totalLeadsCount / leadLimit) * 100));
-  const leadsRemaining = subData?.usage?.leads_remaining ?? Math.max(0, leadLimit - totalLeadsCount);
+  const totalLeadsCount = subData?.usage?.total_leads_count;
+  const leadLimit = subData?.plan?.lead_limit;
+  const usagePct = subData?.usage?.usage_percentage ?? 0;
+  const leadsRemaining = subData?.usage?.leads_remaining;
 
   const isWarning = usagePct >= 80 && usagePct < 100;
   const isCritical = usagePct >= 100;
 
-  const channelItems = summary?.leads
-    ? [
-        {
-          id: "ig",
-          name: "Instagram Direct",
-          type: "instagram" as const,
-          status: "Connected" as const,
-          leadCount: summary.leads.instagram_leads || 128,
-        },
-        {
-          id: "wa",
-          name: "WhatsApp Business",
-          type: "whatsapp" as const,
-          status: "Connected" as const,
-          leadCount: summary.leads.whatsapp_leads || 842,
-        },
-        {
-          id: "web",
-          name: "Website Forms",
-          type: "website" as const,
-          status: "Active" as const,
-          leadCount: summary.leads.website_leads || 278,
-        },
-      ]
-    : undefined;
 
   return (
     <PageContainer>
       <div className="space-y-6 pb-6">
         {/* Quota Banner Alert on Dashboard */}
-        {subData && (
+        {isSubscriptionError && <p className="text-sm text-slate-500">Plan usage is temporarily unavailable.</p>}
+        {!isSubscriptionError && subData?.plan && subData?.usage && (
           <div
             className={`p-4 rounded-2xl border shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${
               isCritical
@@ -161,7 +132,7 @@ export default function Overview() {
               {getGreeting()}, {userName} <span className="animate-bounce">👋</span>
             </h1>
             <p className="text-xs sm:text-sm font-medium text-slate-500 mt-1">
-              Here's what's happening with your leads today.
+              Leads and activity for the selected period. Open conversations and channel status are current.
             </p>
           </div>
 
@@ -170,11 +141,12 @@ export default function Overview() {
             <div className="relative inline-flex items-center">
               <Calendar className="absolute left-3.5 h-4 w-4 text-slate-400 pointer-events-none" />
               <select
+                aria-label="Dashboard date range"
                 value={preset}
                 onChange={(e) => setPreset(e.target.value)}
                 className="pl-10 pr-9 py-2 rounded-xl border border-slate-200 bg-white text-slate-800 text-xs font-bold shadow-2xs hover:border-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500/20 cursor-pointer appearance-none"
               >
-                <option value="this_month">May 1 - May 31, 2025</option>
+                <option value="this_month">This Month</option>
                 <option value="30d">Last 30 Days</option>
                 <option value="7d">Last 7 Days</option>
                 <option value="today">Today</option>
@@ -184,41 +156,37 @@ export default function Overview() {
           </div>
         </div>
 
+        {summary?.generated_at && <p className="text-xs text-slate-500">Updated {new Date(summary.generated_at).toLocaleTimeString(undefined, { timeZone: summary.timezone })} · {summary.timezone} · Refreshes every 30 seconds</p>}
+
         {isLoading ? (
           <LoadingSkeleton rows={4} />
-        ) : summary && summary.leads?.total_leads === 0 ? (
-          <DashboardEmptyState />
-        ) : (
+        ) : summary ? (
           <div className="space-y-6">
             {/* Top KPI Cards Grid (4 Columns) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <DashboardKpiCard
                 title="Total Leads"
-                value={summary?.leads?.total_leads || "1,248"}
+                value={summary.leads.total_leads}
                 icon={Users}
                 colorScheme="pink"
-                trend={{ value: "24.5%", period: "Apr 1 - Apr 30", isPositive: true }}
               />
               <DashboardKpiCard
-                title="New Leads"
-                value={summary?.leads?.new_leads_today || "342"}
+                title="New Leads Today"
+                value={summary.leads.new_leads_today}
                 icon={UserPlus}
                 colorScheme="green"
-                trend={{ value: "18.3%", period: "Apr 1 - Apr 30", isPositive: true }}
               />
               <DashboardKpiCard
-                title="Conversations"
-                value={summary?.leads?.open_conversations || "186"}
+                title="Open Conversations"
+                value={summary.leads.open_conversations}
                 icon={MessageSquare}
                 colorScheme="orange"
-                trend={{ value: "12.8%", period: "Apr 1 - Apr 30", isPositive: true }}
               />
               <DashboardKpiCard
                 title="Conversion Rate"
-                value="7.42%"
+                value={`${summary.leads.lead_to_booking_conversion_rate}%`}
                 icon={Target}
                 colorScheme="purple"
-                trend={{ value: "5.6%", period: "Apr 1 - Apr 30", isPositive: true }}
               />
             </div>
 
@@ -228,21 +196,21 @@ export default function Overview() {
                 <LeadsTimeseriesChart data={summary?.leads_timeseries || []} />
               </div>
               <div className="lg:col-span-1">
-                <ChannelStatusCard channels={channelItems} />
+                <ChannelStatusCard channels={summary.channels} />
               </div>
             </div>
 
             {/* Row 3: Recent Leads (1 Col) & Activity Feed (1 Col) */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="lg:col-span-1">
-                <RecentLeadsTable leads={leadsData?.results || leadsData || []} />
+                <RecentLeadsTable leads={summary.recent_leads} />
               </div>
               <div className="lg:col-span-1">
-                <ActivityFeedCard />
+                <ActivityFeedCard activities={summary.activities} />
               </div>
             </div>
           </div>
-        )}
+        ) : <ErrorState title="Dashboard unavailable" message="No dashboard response was received." onRetry={refetchSummary} />}
       </div>
     </PageContainer>
   );
