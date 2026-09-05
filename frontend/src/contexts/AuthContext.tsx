@@ -45,6 +45,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       
       const response = await apiClient.get("/auth/me/");
+      const profile = response.data;
+      if (!profile || typeof profile !== "object" || Array.isArray(profile)
+        || !["string", "number"].includes(typeof profile.id)
+        || typeof profile.email !== "string" || profile.is_active !== true
+        || typeof profile.is_staff !== "boolean" || typeof profile.is_superuser !== "boolean"
+        || !Array.isArray(profile.workspaces)) {
+        throw new Error("Invalid current-user response");
+      }
       const workspaces: Workspace[] = response.data.workspaces || [];
       const workspace = workspaces.find(item => item.id === localStorage.getItem("organizationId"))
         || workspaces[0] || null;
@@ -54,11 +62,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("organizationId");
       }
       setUser({ ...response.data, workspace, role: "ADMIN" });
-    } catch {
+    } catch (error) {
       localStorage.removeItem("authToken");
       localStorage.removeItem("organizationId");
       queryClient.clear();
       setUser(null);
+      // Initial restoration can finish signed out; an explicit login must
+      // reject so its caller cannot navigate after a failed profile request.
+      if (token) throw error;
     } finally {
       setIsLoading(false);
     }

@@ -5,6 +5,7 @@ import { Lock, Mail, ArrowRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { apiClient } from "@/api/client";
+import { isAxiosError } from "axios";
 
 export default function AdminLogin() {
   const { login } = useAuth();
@@ -20,27 +21,43 @@ export default function AdminLogin() {
     setIsLoading(true);
     setErrorMessage("");
 
+    let verifyingSession = false;
     try {
       const response = await apiClient.post("/auth/login/", {
         email: email.trim(),
         password,
       });
-      const token =
-        response.data?.data?.token ||
-        response.data?.token ||
-        response.data?.key;
-      if (token) {
+      const token = response.data?.data?.token;
+      if (response.data?.status === "success" && typeof token === "string" && token.trim()) {
+        verifyingSession = true;
         await login(token);
         navigate("/admin", { replace: true });
       } else {
-        setErrorMessage("Authentication failed: Invalid response format.");
+        setErrorMessage("Authentication service returned an invalid response.");
       }
-    } catch (err: any) {
-      setErrorMessage(
-        err.response?.data?.detail ||
-          err.response?.data?.message ||
-          "Invalid administrator credentials."
-      );
+    } catch (err: unknown) {
+      const status = isAxiosError(err) ? err.response?.status : undefined;
+      // Never display raw server messages: proxy and application errors may
+      // contain internal details and do not imply an incorrect password.
+      if (verifyingSession) {
+        setErrorMessage("Unable to verify your session. Please try again.");
+      } else if (status === 401) {
+        setErrorMessage("Invalid email or password.");
+      } else if (status === 403) {
+        setErrorMessage("You do not have administrator access.");
+      } else if (status === 404 || status === 405) {
+        setErrorMessage("Authentication endpoint is unavailable.");
+      } else if (status === 429) {
+        setErrorMessage("Too many sign-in attempts. Please wait a minute and try again.");
+      } else if (status && status >= 500) {
+        setErrorMessage("Authentication service is temporarily unavailable.");
+      } else if (status === 400) {
+        setErrorMessage("Please check your email and password.");
+      } else if (isAxiosError(err) && !err.response) {
+        setErrorMessage("Unable to connect to the server.");
+      } else {
+        setErrorMessage("Unable to complete sign in. Please try again.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -66,8 +83,8 @@ export default function AdminLogin() {
         {/* Login Card */}
         <div className="bg-white border border-slate-200/80 rounded-3xl p-8 shadow-xl shadow-slate-200/50 space-y-6">
           {errorMessage && (
-            <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
-              <span>⚠️</span>
+            <div role="alert" className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+              <span aria-hidden="true">⚠️</span>
               <span>{errorMessage}</span>
             </div>
           )}

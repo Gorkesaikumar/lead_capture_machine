@@ -23,6 +23,37 @@ def clear_cache():
 
 @pytest.mark.django_db
 class TestAuthenticationAPI:
+    def test_case_insensitive_email_login(self, api_client, admin_user):
+        assert admin_user.check_password("TestAdminPassword123!")
+        response = api_client.post(
+            LOGIN_URL,
+            {"email": admin_user.email.upper(), "password": "TestAdminPassword123!"},
+            format="json",
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["user"]["is_superuser"] is True
+
+    @pytest.mark.parametrize("staff,superuser,expected", [
+        (True, False, 200), (False, True, 200), (False, False, 403),
+    ])
+    def test_token_enforces_admin_authorization(self, api_client, staff, superuser, expected):
+        user = User.objects.create_user(
+            email="access-check@example.test", password="SyntheticPassword9!",
+            is_staff=staff, is_superuser=superuser,
+        )
+        response = api_client.post(
+            LOGIN_URL, {"email": user.email, "password": "SyntheticPassword9!"}, format="json",
+        )
+        assert response.status_code == 200
+        api_client.credentials(HTTP_AUTHORIZATION=f"Token {response.json()['data']['token']}")
+        assert api_client.get(ME_URL).status_code == 200
+        assert api_client.get("/api/v1/admin/kpis/").status_code == expected
+
+    def test_invalid_token_cannot_load_profile_or_admin(self, api_client):
+        api_client.credentials(HTTP_AUTHORIZATION="Token nonexistent-synthetic-token")
+        assert api_client.get(ME_URL).status_code == 401
+        assert api_client.get("/api/v1/admin/kpis/").status_code == 401
+
     def test_successful_login(self, api_client, admin_user):
         """6. Successful login returns token and safe user information."""
         response = api_client.post(
