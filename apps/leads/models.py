@@ -16,11 +16,8 @@ class Lead(CoreModel, SoftDeletableModel):
         NEW = "NEW", _("New")
         CONTACTED = "CONTACTED", _("Contacted")
         QUALIFIED = "QUALIFIED", _("Qualified")
-        BOOKING_LINK_SENT = "BOOKING_LINK_SENT", _("Booking Link Sent")
-        BOOKED = "BOOKED", _("Booked")
-        COMPLETED = "COMPLETED", _("Completed")
+        CONVERTED = "CONVERTED", _("Converted")
         LOST = "LOST", _("Lost")
-        CANCELLED = "CANCELLED", _("Cancelled")
 
     class Priority(models.TextChoices):
         LOW = "LOW", _("Low")
@@ -32,16 +29,20 @@ class Lead(CoreModel, SoftDeletableModel):
         Status.NEW,
         Status.CONTACTED,
         Status.QUALIFIED,
-        Status.BOOKING_LINK_SENT,
     ]
 
     TERMINAL_STATUSES = [
-        Status.BOOKED,
-        Status.COMPLETED,
+        Status.CONVERTED,
         Status.LOST,
-        Status.CANCELLED,
     ]
 
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="leads",
+        help_text=_("The organization this lead belongs to"),
+        null=True,
+    )
     customer = models.ForeignKey(
         "customers.Customer",
         on_delete=models.CASCADE,
@@ -51,16 +52,25 @@ class Lead(CoreModel, SoftDeletableModel):
     source_channel = models.CharField(
         _("source channel"),
         max_length=20,
-        choices=[("INSTAGRAM", "Instagram"), ("WHATSAPP", "WhatsApp")],
+        choices=[
+            ("INSTAGRAM", "Instagram"),
+            ("WHATSAPP", "WhatsApp"),
+            ("WEBSITE", "Website"),
+            ("MANUAL", "Manual"),
+        ],
         db_index=True,
     )
-    conversation = models.ForeignKey(
-        "conversations.Conversation",
-        null=True,
+    source_identifier = models.CharField(
+        _("source identifier"),
+        max_length=255,
         blank=True,
-        on_delete=models.SET_NULL,
-        related_name="leads",
-        help_text=_("The communication thread where this lead originated"),
+        help_text=_("Optional tracking code, form ID, or external reference"),
+    )
+    tags = models.JSONField(
+        _("tags"),
+        default=list,
+        blank=True,
+        help_text=_("List of tags/labels applied to this lead"),
     )
     originating_message = models.ForeignKey(
         "conversations.Message",
@@ -148,7 +158,7 @@ class Lead(CoreModel, SoftDeletableModel):
             models.UniqueConstraint(
                 fields=["customer"],
                 condition=models.Q(
-                    status__in=["NEW", "CONTACTED", "QUALIFIED", "BOOKING_LINK_SENT"],
+                    status__in=["NEW", "CONTACTED", "QUALIFIED"],
                     is_deleted=False,
                 ),
                 name="unique_active_lead_per_customer",
@@ -174,6 +184,13 @@ class LeadTrigger(CoreModel):
         CONTAINS = "CONTAINS", _("Contains Keyword/Phrase")
         REGEX = "REGEX", _("Regular Expression")
 
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="lead_triggers",
+        help_text=_("The organization this trigger belongs to"),
+        null=True,
+    )
     phrase = models.CharField(
         _("keyword / phrase"),
         max_length=255,
@@ -218,6 +235,61 @@ class LeadTrigger(CoreModel):
         return f"[{self.get_match_type_display()}] \"{self.phrase}\"{svc}"
 
 
+class LeadForm(CoreModel, SoftDeletableModel):
+    """
+    Configuration for public-facing lead capture forms (e.g. Website widgets).
+    """
+
+    import uuid
+
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="lead_forms",
+        help_text=_("The organization this form belongs to"),
+        null=True,
+    )
+    name = models.CharField(
+        _("form name"),
+        max_length=255,
+        help_text=_("Internal name for this form (e.g., 'Main Website Contact')"),
+    )
+    public_id = models.UUIDField(
+        _("public id"),
+        default=uuid.uuid4,
+        unique=True,
+        db_index=True,
+        editable=False,
+        help_text=_("The public identifier used for form submission endpoints"),
+    )
+    is_active = models.BooleanField(
+        _("is active"),
+        default=True,
+        db_index=True,
+        help_text=_("If disabled, public submissions to this form will be rejected"),
+    )
+    success_message = models.CharField(
+        _("success message"),
+        max_length=255,
+        default="Thank you for your message. We will be in touch shortly.",
+        help_text=_("Message to display to the user after successful submission"),
+    )
+    fields_config = models.JSONField(
+        _("fields configuration"),
+        default=dict,
+        blank=True,
+        help_text=_("Optional configuration for required fields or custom branding"),
+    )
+
+    class Meta:
+        verbose_name = _("lead form")
+        verbose_name_plural = _("lead forms")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.name} ({self.public_id})"
+
+
 class LeadActivity(CoreModel):
     """
     Audit log of all state transitions and interactions on a Lead.
@@ -229,8 +301,6 @@ class LeadActivity(CoreModel):
         STAFF_ASSIGNED = "STAFF_ASSIGNED", _("Staff Assigned")
         NOTE_ADDED = "NOTE_ADDED", _("Note Added")
         MESSAGE_ATTACHED = "MESSAGE_ATTACHED", _("Message Attached")
-        BOOKING_LINK_SENT = "BOOKING_LINK_SENT", _("Booking Link Sent")
-        BOOKING_CONFIRMED = "BOOKING_CONFIRMED", _("Booking Confirmed")
 
     lead = models.ForeignKey(
         Lead,

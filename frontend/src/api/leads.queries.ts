@@ -37,6 +37,24 @@ export function useUpdateLeadStatus() {
   });
 }
 
+export function useAssignLead() {
+  return useMutation({
+    mutationFn: async ({ id, staff_id }: { id: string; staff_id: string | null }) => {
+      const { data } = await apiClient.post(`/leads/${id}/assign/`, { staff_id });
+      return data;
+    },
+  });
+}
+
+export function useDeleteLead() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await apiClient.delete(`/leads/${id}/`);
+      return data;
+    },
+  });
+}
+
 
 export function useLeadTriggers() {
   return useQuery({
@@ -86,3 +104,55 @@ export function useDeleteLeadTrigger() {
   });
 }
 
+
+// =======================
+// LEAD FORMS
+// =======================
+
+export function useLeadForms() {
+  return useQuery({
+    queryKey: ["lead-forms"],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/leads/forms/");
+      return data.results || data;
+    },
+  });
+}
+
+export function useCreateLeadForm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: any) => {
+      const { data } = await apiClient.post("/leads/forms/", payload);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lead-forms"] });
+    },
+  });
+}
+
+export function useUpdateLeadForm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, ...payload }: any) => {
+      const { data } = await apiClient.patch(`/leads/forms/${id}/`, payload);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lead-forms"] });
+    },
+  });
+}
+
+export function useDeleteLeadForm() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/leads/forms/${id}/`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["lead-forms"] });
+    },
+  });
+}

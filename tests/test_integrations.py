@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import route_payload, process_test_webhook_payload, configure_channel, test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive tests for Meta Integrations module (Instagram and WhatsApp).
 Tests signature verification, payload parsing, pipeline orchestration, and outbound providers.
@@ -184,6 +185,7 @@ class TestInstagramInboundParser:
             "object": "instagram",
             "entry": [
                 {
+                    "id": "90001",
                     "messaging": [
                         {
                             "sender": {"id": "my_studio_page"},
@@ -301,13 +303,13 @@ class TestInboundPipelineOrchestration:
 
     @pytest.fixture
     def baby_shoot_trigger(self):
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Newborn Baby Shoot",
             slug="newborn-baby-shoot",
             duration_minutes=60,
             base_price=350.00,
         )
-        return LeadTrigger.objects.create(
+        return LeadTrigger.objects.create(organization=test_workspace(),
             phrase="baby shoot",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=service,
@@ -336,10 +338,11 @@ class TestInboundPipelineOrchestration:
                 }
             ],
         }
+        route_payload(payload)
         raw_body = json.dumps(payload).encode("utf-8")
         sig_header = generate_meta_signature(raw_body, test_app_secret)
 
-        result = InboundPipelineService.process_webhook_payload(
+        result = process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig_header,
             payload=payload,
@@ -377,6 +380,7 @@ class TestInboundPipelineOrchestration:
             "object": "instagram",
             "entry": [
                 {
+                    "id": "90001",
                     "messaging": [
                         {
                             "sender": {"id": "ig_cust_idempotent"},
@@ -389,11 +393,12 @@ class TestInboundPipelineOrchestration:
                 }
             ],
         }
+        route_payload(payload)
         raw_body = json.dumps(payload).encode("utf-8")
         sig_header = generate_meta_signature(raw_body, test_app_secret)
 
         # First delivery
-        res1 = InboundPipelineService.process_webhook_payload(
+        res1 = process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig_header,
             payload=payload,
@@ -402,7 +407,7 @@ class TestInboundPipelineOrchestration:
         assert res1["leads_created"] == 1
 
         # Second delivery of same webhook (idempotency test)
-        res2 = InboundPipelineService.process_webhook_payload(
+        res2 = process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig_header,
             payload=payload,
@@ -458,6 +463,7 @@ class TestMetaWebhookEndpoints:
                     "changes": [
                         {
                             "value": {
+                                "metadata": {"phone_number_id": "90001"},
                                 "contacts": [{"profile": {"name": "Test User"}, "wa_id": "99999"}],
                                 "messages": [
                                     {
@@ -473,6 +479,7 @@ class TestMetaWebhookEndpoints:
                 }
             ],
         }
+        route_payload(payload)
         raw_body = json.dumps(payload).encode("utf-8")
         sig_header = generate_meta_signature(raw_body, test_app_secret)
 
@@ -539,14 +546,20 @@ class TestOutboundMessagingProviders:
             password="AdminPassword123!",
             full_name="Admin Integrations",
         )
+        add_member(admin_user)
         client.force_authenticate(user=admin_user)
 
         from apps.customers.models import Customer, CustomerIdentity
-        customer = Customer.objects.create(display_name="API Recipient")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="API Recipient")
         CustomerIdentity.objects.create(
             customer=customer, channel="WHATSAPP", external_user_id="919876543210"
         )
 
+        from apps.conversations.models import Conversation, Message
+        from django.utils import timezone
+        conv = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="WHATSAPP")
+        Message.objects.create(conversation=conv, direction="INBOUND", provider_timestamp=timezone.now(), text="Hi")
+        configure_channel(channel="WHATSAPP")
         with patch.object(WhatsAppMessagingProvider, "send_text_message") as mock_send:
             mock_send.return_value = OutboundResult(
                 success=True, external_message_id="wamid.API_TEST_100"
@@ -563,9 +576,9 @@ class TestOutboundMessagingProviders:
                 format="json",
             )
 
-            assert response.status_code == status.HTTP_200_OK
-            assert response.data["success"] is True
-            assert response.data["external_message_id"].startswith("local_")
+            assert response.status_code == status.HTTP_202_ACCEPTED
+            assert response.data["delivery_status"] == "QUEUED"
+            assert response.data["external_message_id"] == ""
 
     def test_outbound_dispatch_api_view_unauthenticated_rejected(self, configure_meta_settings):
         client = APIClient()
@@ -591,6 +604,7 @@ class TestOutboundMessagingProviders:
         admin_user.is_active = False
         admin_user.save()
         
+        add_member(admin_user)
         client.force_authenticate(user=admin_user)
 
         url = reverse("api_v1:integrations:outbound-send")

@@ -21,7 +21,7 @@ export function CustomerHistoryPane({ history }: { history: any }) {
               <div 
                 key={lead.id} 
                 className="p-4 hover:bg-slate-50 cursor-pointer transition-colors flex justify-between items-center"
-                onClick={() => navigate(`/leads/${lead.id}`)}
+                onClick={() => navigate(`/app/leads/${lead.id}`)}
               >
                 <div>
                   <StatusBadge status={lead.status.toLowerCase()} />

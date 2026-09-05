@@ -4,11 +4,64 @@ Serializers for Leads, Triggers, and LeadActivity auditing.
 from rest_framework import serializers
 from apps.accounts.models import User
 from apps.customers.models import Customer
-from apps.leads.models import Lead, LeadActivity, LeadTrigger
+from apps.leads.models import Lead, LeadActivity, LeadTrigger, LeadForm
 from apps.services.models import PhotographyService
 
 
+class LeadFormSerializer(serializers.ModelSerializer):
+    """
+    Serializer for managing Lead Capture Forms.
+    """
+    submissions_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LeadForm
+        fields = (
+            "id",
+            "name",
+            "public_id",
+            "is_active",
+            "success_message",
+            "fields_config",
+            "submissions_count",
+            "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("id", "public_id", "submissions_count", "created_at", "updated_at")
+
+    def get_submissions_count(self, obj):
+        from apps.leads.models import Lead
+        return Lead.objects.filter(
+            source_channel="WEBSITE",
+            source_identifier=str(obj.public_id),
+            is_deleted=False
+        ).count()
+
+
+class PublicLeadSubmissionSerializer(serializers.Serializer):
+    """
+    Serializer for public website lead submission.
+    """
+    name = serializers.CharField(max_length=255, required=True)
+    phone = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    message = serializers.CharField(max_length=2000, required=False, allow_blank=True)
+    referrer = serializers.CharField(max_length=1000, required=False, allow_blank=True)
+    landing_page = serializers.CharField(max_length=1000, required=False, allow_blank=True)
+
+    def validate(self, data):
+        if not data.get('phone') and not data.get('email'):
+            raise serializers.ValidationError("Either phone or email is required.")
+        return data
+
+
 class LeadTriggerSerializer(serializers.ModelSerializer):
+    def validate_service(self, value):
+        request = self.context.get("request")
+        if value and request and value.organization_id != request.organization.id:
+            raise serializers.ValidationError("Service not found in this workspace.")
+        return value
+
     """
     Serializer for LeadTrigger CRUD.
     """
@@ -106,6 +159,8 @@ class LeadListSerializer(serializers.ModelSerializer):
             "summary",
             "trigger_phrase",
             "trigger_service_name",
+            "tags",
+            "source_identifier",
             "created_at",
             "updated_at",
         )
@@ -125,6 +180,7 @@ class LeadDetailSerializer(serializers.ModelSerializer):
     trigger_phrase = serializers.CharField(source="trigger.phrase", read_only=True)
     trigger_service_name = serializers.CharField(source="trigger.service.name", read_only=True)
     activities = LeadActivitySerializer(many=True, read_only=True)
+    tags = serializers.ListField(child=serializers.CharField(max_length=80), max_length=50, required=False)
 
     class Meta:
         model = Lead
@@ -132,7 +188,6 @@ class LeadDetailSerializer(serializers.ModelSerializer):
             "id",
             "customer",
             "source_channel",
-            "conversation_id",
             "originating_message_id",
             "service",
             "status",
@@ -146,6 +201,8 @@ class LeadDetailSerializer(serializers.ModelSerializer):
             "closed_at",
             "trigger_phrase",
             "trigger_service_name",
+            "tags",
+            "source_identifier",
             "activities",
             "created_at",
             "updated_at",
@@ -154,7 +211,6 @@ class LeadDetailSerializer(serializers.ModelSerializer):
             "id",
             "customer",
             "source_channel",
-            "conversation_id",
             "originating_message_id",
             "qualified_at",
             "closed_at",
@@ -203,3 +259,24 @@ class SendBookingLinkSerializer(serializers.Serializer):
 
     message = serializers.CharField(required=False, allow_blank=True, max_length=2000)
     service_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class LeadCreateSerializer(serializers.Serializer):
+    """
+    Payload for creating a lead manually or via website form.
+    """
+
+    customer_name = serializers.CharField(max_length=255, required=True)
+    status = serializers.ChoiceField(choices=Lead.Status.choices, required=False)
+    assigned_staff_id = serializers.UUIDField(required=False, allow_null=True)
+    phone_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_blank=True)
+    source_channel = serializers.ChoiceField(
+        choices=["MANUAL", "WEBSITE"], default="MANUAL"
+    )
+    summary = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    notes = serializers.CharField(required=False, allow_blank=True)
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=50), required=False, default=list
+    )
+    source_identifier = serializers.CharField(required=False, allow_blank=True, max_length=255)

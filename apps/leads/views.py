@@ -4,8 +4,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.conf import settings
+from django.db import transaction
 from apps.accounts.models import User
-from apps.leads.models import Lead, LeadActivity, LeadTrigger
+from apps.leads.models import Lead, LeadActivity, LeadTrigger, LeadForm
 from apps.leads.serializers import (
     LeadActivitySerializer,
     LeadAssignStaffSerializer,
@@ -15,17 +16,21 @@ from apps.leads.serializers import (
     LeadTriggerSerializer,
     SendLeadMessageSerializer,
     SendBookingLinkSerializer,
+    LeadFormSerializer,
 )
 from apps.leads.services import LeadManagementService
 from apps.core.realtime import broadcast_new_message, broadcast_lead_updated
+from apps.core.mixins import TenantViewSetMixin
 
 
-class LeadViewSet(viewsets.ModelViewSet):
+class LeadViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    queryset = Lead.objects.all()
     """
     Admin endpoints for managing sales leads and tracking conversions.
     """
 
-    permission_classes = [IsAuthenticated]
+    from apps.organizations.permissions import IsOrganizationMember, IsOrganizationAdmin
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -54,8 +59,9 @@ class LeadViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
+        queryset = super().get_queryset()
         queryset = (
-            Lead.objects.filter(is_deleted=False)
+            queryset.filter(is_deleted=False)
             .select_related("customer", "service", "assigned_staff")
             .prefetch_related("activities", "activities__actor")
         )
@@ -75,10 +81,59 @@ class LeadViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == "list":
             return LeadListSerializer
+        if self.action == "create":
+            from apps.leads.serializers import LeadCreateSerializer
+            return LeadCreateSerializer
         return LeadDetailSerializer
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        selected_staff = serializer.validated_data.get("assigned_staff_id")
+        staff = None
+        if selected_staff:
+            staff = User.objects.filter(pk=selected_staff, is_active=True, memberships__organization=request.organization, memberships__is_active=True).first()
+            if not staff:
+                return Response({"detail": "Assignee must be an active member of this workspace."}, status=400)
+        lead = LeadManagementService.create_direct_lead(
+            organization=request.organization,
+            source_channel=serializer.validated_data["source_channel"],
+            customer_name=serializer.validated_data["customer_name"],
+            phone_number=serializer.validated_data.get("phone_number"),
+            email=serializer.validated_data.get("email"),
+            summary=serializer.validated_data.get("summary", ""),
+            notes=serializer.validated_data.get("notes", ""),
+            tags=serializer.validated_data.get("tags", []),
+            source_identifier=serializer.validated_data.get("source_identifier", ""),
+            actor=request.user
+        )
+
+        if "assigned_staff_id" in serializer.validated_data:
+            LeadManagementService.assign_staff(lead, staff, actor=request.user)
+        selected_status = serializer.validated_data.get("status")
+        if selected_status and selected_status != lead.status:
+            LeadManagementService.update_status(lead, selected_status, actor=request.user)
+
+        return Response(
+            LeadDetailSerializer(lead).data,
+            status=status.HTTP_201_CREATED
+        )
 
     def perform_destroy(self, instance):
         instance.soft_delete()
+
+    def perform_update(self, serializer):
+        from django.db import transaction
+        with transaction.atomic():
+            serializer.instance = Lead.objects.select_for_update().get(pk=serializer.instance.pk)
+            new_status = serializer.validated_data.pop("status", None)
+            lead = serializer.save()
+            if new_status and new_status != lead.status:
+                LeadManagementService.update_status(lead, new_status, actor=self.request.user)
+            from apps.core.realtime import broadcast_lead_updated
+            transaction.on_commit(lambda: broadcast_lead_updated(lead))
 
     @action(detail=True, methods=["post"], url_path="status")
     def update_status(self, request, pk=None):
@@ -116,7 +171,11 @@ class LeadViewSet(viewsets.ModelViewSet):
         staff_user = None
         if staff_id:
             try:
-                staff_user = User.objects.get(id=staff_id, is_active=True)
+                staff_user = User.objects.filter(
+                    id=staff_id,
+                    is_active=True,
+                    memberships__organization=request.organization, memberships__is_active=True
+                ).distinct().get()
             except User.DoesNotExist:
                 return Response(
                     {"detail": f"User with id {staff_id} not found or inactive."},
@@ -154,19 +213,20 @@ class LeadViewSet(viewsets.ModelViewSet):
 
         lead = self.get_object()
 
-        if not lead.conversation_id:
-            return Response(
-                {"conversation": None, "messages": []},
-                status=status.HTTP_200_OK,
-            )
-
         try:
             conversation = (
                 Conversation.objects.select_related("customer")
                 .prefetch_related("messages")
-                .get(id=lead.conversation_id)
+                .filter(lead=lead)
+                .order_by("-last_message_at")
+                .first()
             )
-        except Conversation.DoesNotExist:
+            if not conversation:
+                return Response(
+                    {"conversation": None, "messages": []},
+                    status=status.HTTP_200_OK,
+                )
+        except Exception:
             return Response(
                 {"conversation": None, "messages": []},
                 status=status.HTTP_200_OK,
@@ -211,353 +271,64 @@ class LeadViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    def _reply_conversation(self, lead):
+        from apps.conversations.models import Conversation
+        from rest_framework.exceptions import ValidationError
+        conversation = Conversation.objects.filter(organization=lead.organization, customer=lead.customer, channel=lead.source_channel, is_deleted=False).first()
+        if not conversation:
+            raise ValidationError("A customer conversation is required before replying.")
+        return conversation
+
     @action(detail=True, methods=["post"], url_path="messages")
     def send_message(self, request, pk=None):
-        """
-        POST /api/v1/leads/{id}/messages/
-        Sends an outbound Instagram DM to the lead's customer.
-        Enforces the Meta 24-hour messaging window policy.
-        """
-        import logging
-        logger = logging.getLogger("apps.leads")
-
+        from apps.conversations.outbound import queue_message, dispatch_message
+        from apps.conversations.serializers import MessageSerializer
         lead = self.get_object()
         serializer = SendLeadMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        message_text = serializer.validated_data["message"]
-
-        # 1. Ensure this lead has Instagram as its source channel
-        if lead.source_channel != "INSTAGRAM":
-            return Response(
-                {"error_code": "wrong_channel", "message": "This lead is not from Instagram."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # 2. Look up the customer's Instagram identity (IGSID)
-        from apps.customers.models import CustomerIdentity
-        from apps.integrations.meta.instagram.provider import InstagramMessagingProvider
-
-        identity = (
-            CustomerIdentity.objects.filter(
-                customer=lead.customer,
-                channel="INSTAGRAM",
-            )
-            .order_by("-updated_at")
-            .first()
-        )
-        if not identity or not identity.external_user_id or not identity.external_user_id.strip():
-            return Response(
-                {
-                    "error_code": "no_instagram_identity",
-                    "message": (
-                        "No Instagram identity found for this customer. "
-                        "The customer must send an Instagram message to the studio first before you can reply."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        igsid = identity.external_user_id.strip()
-
-        # Validate recipient ID format before attempting dispatch
-        is_valid_id, id_error = InstagramMessagingProvider.validate_recipient_id(igsid)
-        if not is_valid_id:
-            logger.warning(
-                "Invalid Instagram recipient ID for lead %s (customer=%s, raw_id=%s): %s",
-                lead.id,
-                lead.customer_id,
-                igsid,
-                id_error,
-            )
-            return Response(
-                {
-                    "error_code": "invalid_recipient_id",
-                    "message": id_error or "Invalid Instagram recipient ID. The customer must send a message first.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # 3. Check Meta 24-hour messaging window
-        from apps.conversations.services import ConversationService
-        within_window = ConversationService.is_within_24h_window(
-            channel="INSTAGRAM",
-            external_user_id=igsid,
-        )
-        if not within_window:
-            return Response(
-                {
-                    "error_code": "messaging_window_closed",
-                    "message": (
-                        "Instagram's 24-hour messaging window has expired. "
-                        "The customer must send a message first before you can reply."
-                    ),
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # 4. Send via Instagram Messaging API
-        provider = InstagramMessagingProvider()
-        result = provider.send_text_message(recipient_id=igsid, text=message_text)
-
-        # 5. Ensure conversation exists
-        from apps.conversations.models import Conversation, Message
-        if lead.conversation_id:
-            conversation = Conversation.objects.get(id=lead.conversation_id)
-        else:
-            conversation, _ = Conversation.objects.get_or_create(
-                customer=lead.customer,
-                channel="INSTAGRAM",
-            )
-            lead.conversation = conversation
-            lead.save(update_fields=["conversation", "updated_at"])
-
-        # 6. Store outbound message regardless of success
-        stored_message = ConversationService.store_outbound_message(
-            conversation=conversation,
-            text=message_text,
-            external_message_id=result.external_message_id or "",
-            raw_payload=result.provider_response or {},
-        )
-
-        if not result.success:
-            stored_message.delivery_status = Message.DeliveryStatus.FAILED
-            stored_message.raw_payload = {"error": result.error_message}
-            stored_message.save(update_fields=["delivery_status", "raw_payload"])
-
-            broadcast_new_message(stored_message, conversation=conversation, lead_id=str(lead.id))
-
-            logger.error(
-                "Failed to send Instagram DM for lead %s to IGSID %s: %s",
-                lead.id, igsid, result.error_message,
-            )
-            return Response(
-                {
-                    "error_code": "send_failed",
-                    "message": result.error_message or "Failed to send message via Instagram.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
-
-
-        # 6. Log lead activity
-        LeadActivity.objects.create(
-            lead=lead,
-            activity_type=LeadActivity.ActivityType.MESSAGE_ATTACHED,
-            actor=request.user,
-            message=stored_message,
-            description=f"Outbound Instagram DM sent: {message_text[:100]}",
-            metadata={"external_message_id": result.external_message_id or ""},
-        )
-
-        # 7. Auto-advance lead status from NEW to CONTACTED
+        message = queue_message(self._reply_conversation(lead), {"text": serializer.validated_data["message"]}, request.user, request.data.get("request_id", ""), dispatch=False)
+        message = dispatch_message(message.pk)
+        if message.delivery_status not in ("SENT", "DELIVERED", "READ"):
+            return Response({"error_code": message.error_code, "message": message.error_message, "record": MessageSerializer(message).data}, status=502)
         if lead.status == Lead.Status.NEW:
-            LeadManagementService.update_status(
-                lead=lead,
-                new_status=Lead.Status.CONTACTED,
-                actor=request.user,
-                notes="First outbound message sent via Instagram DM.",
-            )
-
-        # 8. Broadcast outbound message via WebSockets
-        broadcast_new_message(stored_message, conversation=conversation, lead_id=str(lead.id))
-
-        from apps.conversations.serializers import MessageSerializer
-        return Response(
-            MessageSerializer(stored_message).data,
-            status=status.HTTP_201_CREATED,
-        )
+            LeadManagementService.update_status(lead, Lead.Status.CONTACTED, actor=request.user)
+        return Response(MessageSerializer(message).data, status=201)
 
     @action(detail=True, methods=["post"], url_path="send-booking-link")
     def send_booking_link(self, request, pk=None):
-        """
-        POST /api/v1/leads/{id}/send-booking-link/
-        Generates a secure booking link and sends it to the customer via Instagram DM.
-        """
-        import logging
-        logger = logging.getLogger("apps.leads")
-
+        from apps.conversations.outbound import queue_message, dispatch_message, validate_send
+        from apps.conversations.serializers import MessageSerializer
+        from apps.bookings.services import BookingLinkService
+        from apps.services.models import PhotographyService
+        from django.shortcuts import get_object_or_404
         lead = self.get_object()
         serializer = SendBookingLinkSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        custom_message = serializer.validated_data.get("message", "")
-        service_id = serializer.validated_data.get("service_id")
-
-        # 1. Resolve optional service override
+        conversation = self._reply_conversation(lead)
+        validate_send(conversation, {"text": "Booking link"})
         service = lead.service
-        if service_id:
-            from apps.services.models import PhotographyService
-            try:
-                service = PhotographyService.objects.get(
-                    id=service_id, is_deleted=False, is_active=True
-                )
-            except PhotographyService.DoesNotExist:
-                return Response(
-                    {"error_code": "invalid_service", "message": "Specified service not found."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-        # 2. Look up Instagram identity
-        from apps.customers.models import CustomerIdentity
-        from apps.integrations.meta.instagram.provider import InstagramMessagingProvider
-
-        identity = (
-            CustomerIdentity.objects.filter(
-                customer=lead.customer,
-                channel="INSTAGRAM",
-            )
-            .order_by("-updated_at")
-            .first()
-        )
-        if not identity or not identity.external_user_id or not identity.external_user_id.strip():
-            return Response(
-                {
-                    "error_code": "no_instagram_identity",
-                    "message": (
-                        "No Instagram identity found for this customer. "
-                        "The customer must send an Instagram message to the studio first before you can reply."
-                    ),
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        igsid = identity.external_user_id.strip()
-
-        # Validate recipient ID format
-        is_valid_id, id_error = InstagramMessagingProvider.validate_recipient_id(igsid)
-        if not is_valid_id:
-            logger.warning(
-                "Invalid Instagram recipient ID for lead %s (customer=%s, raw_id=%s): %s",
-                lead.id,
-                lead.customer_id,
-                igsid,
-                id_error,
-            )
-            return Response(
-                {
-                    "error_code": "invalid_recipient_id",
-                    "message": id_error or "Invalid Instagram recipient ID. The customer must send a message first.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # 3. Check 24-hour window
-        from apps.conversations.services import ConversationService
-        within_window = ConversationService.is_within_24h_window(
-            channel="INSTAGRAM", external_user_id=igsid
-        )
-        if not within_window:
-            return Response(
-                {
-                    "error_code": "messaging_window_closed",
-                    "message": (
-                        "Instagram's 24-hour messaging window has expired. "
-                        "The customer must send a message first before you can reply."
-                    ),
-                },
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        # 4. Generate booking link
-        from apps.bookings.services import BookingLinkService
-        booking_link = BookingLinkService.create_for_lead(
-            lead=lead,
-            service=service,
-            expires_in_days=7,
-            created_by=request.user,
-        )
-        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
-        booking_url = f"{frontend_url}/book/{booking_link.token}"
-
-        # 5. Build final message text
-        if custom_message:
-            final_message = custom_message.replace("{BOOKING_URL}", booking_url)
-        else:
-            final_message = (
-                f"Hi! 👋\n\n"
-                f"Thank you for your interest. Here's your personalized booking link to select "
-                f"your preferred date and time:\n\n"
-                f"{booking_url}\n\n"
-                f"We look forward to seeing you! 📸"
-            )
-
-        # 6. Send via Instagram
-        from apps.integrations.meta.instagram.provider import InstagramMessagingProvider
-        provider = InstagramMessagingProvider()
-        result = provider.send_text_message(recipient_id=igsid, text=final_message)
-
-        # 7. Ensure conversation exists
-        from apps.conversations.models import Conversation, Message
-        if lead.conversation_id:
-            conversation = Conversation.objects.get(id=lead.conversation_id)
-        else:
-            conversation, _ = Conversation.objects.get_or_create(
-                customer=lead.customer, channel="INSTAGRAM"
-            )
-            lead.conversation = conversation
-            lead.save(update_fields=["conversation", "updated_at"])
-
-        # 8. Store outbound message regardless of success
-        stored_message = ConversationService.store_outbound_message(
-            conversation=conversation,
-            text=final_message,
-            external_message_id=result.external_message_id or "",
-            raw_payload=result.provider_response or {},
-        )
-
-        if not result.success:
-            stored_message.delivery_status = Message.DeliveryStatus.FAILED
-            stored_message.raw_payload = {"error": result.error_message}
-            stored_message.save(update_fields=["delivery_status", "raw_payload"])
-
-            broadcast_new_message(stored_message, conversation=conversation, lead_id=str(lead.id))
-
-            logger.error(
-                "Failed to send booking link DM for lead %s to IGSID %s: %s",
-                lead.id, igsid, result.error_message,
-            )
-            return Response(
-                {
-                    "error_code": "send_failed",
-                    "message": result.error_message or "Failed to send booking link via Instagram.",
-                },
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+        if serializer.validated_data.get("service_id"):
+            service = get_object_or_404(PhotographyService, pk=serializer.validated_data["service_id"], organization=request.organization, is_active=True, is_deleted=False)
+        link = BookingLinkService.create_for_lead(lead=lead, service=service, expires_in_days=7, created_by=request.user)
+        url = f"{settings.FRONTEND_URL}/book/{link.token}"
+        custom = serializer.validated_data.get("message", "")
+        text = custom.replace("{BOOKING_URL}", url) if custom else f"Choose a time for your appointment: {url}"
+        if url not in text:
+            text += f"\n{url}"
+        message = queue_message(conversation, {"text": text}, request.user, dispatch=False)
+        message = dispatch_message(message.pk)
+        if message.delivery_status not in ("SENT", "DELIVERED", "READ"):
+            return Response({"error_code": message.error_code, "message": message.error_message, "booking_url": url}, status=502)
+        return Response({"message": MessageSerializer(message).data, "booking_url": url, "booking_link_token": link.token}, status=201)
 
 
-        # Note: BookingLinkService.create_for_lead already created the BOOKING_LINK_SENT
-        # LeadActivity and updated lead status. We just attach the conversation message
-        # to the most recent booking link activity so the conversation is linked.
-        try:
-            recent_activity = LeadActivity.objects.filter(
-                lead=lead,
-                activity_type=LeadActivity.ActivityType.BOOKING_LINK_SENT,
-            ).latest("created_at")
-            if not recent_activity.message:
-                recent_activity.message = stored_message
-                recent_activity.save(update_fields=["message", "updated_at"])
-        except LeadActivity.DoesNotExist:
-            pass
-
-        # 8. Broadcast outbound message and lead update via WebSockets
-        broadcast_new_message(stored_message, conversation=conversation, lead_id=str(lead.id))
-        broadcast_lead_updated(lead)
-
-        from apps.conversations.serializers import MessageSerializer
-        return Response(
-            {
-                "message": MessageSerializer(stored_message).data,
-                "booking_url": booking_url,
-                "booking_link_token": booking_link.token,
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
-
-class LeadTriggerViewSet(viewsets.ModelViewSet):
+class LeadTriggerViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
     """
     CRUD endpoints for configuring automated intent detection keywords/phrases.
     """
 
-    permission_classes = [IsAuthenticated]
+    from apps.organizations.permissions import IsOrganizationAdmin
+    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
     serializer_class = LeadTriggerSerializer
     queryset = LeadTrigger.objects.select_related("service").all().order_by("-created_at")
     filter_backends = [
@@ -570,3 +341,27 @@ class LeadTriggerViewSet(viewsets.ModelViewSet):
     ordering_fields = ["phrase", "priority", "created_at"]
     ordering = ["-created_at"]
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+
+class LeadFormViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    """
+    CRUD endpoints for configuring Lead Capture Forms.
+    """
+
+    from apps.organizations.permissions import IsOrganizationAdmin
+    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
+    serializer_class = LeadFormSerializer
+    queryset = LeadForm.objects.all().order_by("-created_at")
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
+    filterset_fields = ["is_active"]
+    search_fields = ["name"]
+    ordering_fields = ["name", "created_at"]
+    ordering = ["-created_at"]
+    http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+
+    def perform_destroy(self, instance):
+        instance.soft_delete()

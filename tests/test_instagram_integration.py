@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import route_payload, process_test_webhook_payload, configure_channel, test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive tests for Instagram Messaging Integration inside integrations.meta.instagram.
 Tests GET webhook verification, POST receiver, signature validation, parser, idempotency,
@@ -59,6 +60,7 @@ def configure_instagram_settings(settings, test_app_secret, test_verify_token):
     settings.INSTAGRAM_PAGE_ACCESS_TOKEN = "EAAGtest_instagram_page_token_abcdef"
     settings.META_GRAPH_API_VERSION = "v21.0"
     settings.CELERY_TASK_ALWAYS_EAGER = True
+    route_payload(INSTAGRAM_TEXT_MESSAGE_PAYLOAD)
 
 
 def make_signature(body: bytes, secret: str) -> str:
@@ -251,13 +253,13 @@ class TestInstagramPipelineAndIdempotency:
 
     @pytest.fixture
     def outdoor_shoot_trigger(self):
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Outdoor Portrait Shoot",
             slug="outdoor-portrait-shoot",
             duration_minutes=90,
             base_price=450.00,
         )
-        return LeadTrigger.objects.create(
+        return LeadTrigger.objects.create(organization=test_workspace(),
             phrase="outdoor portrait",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=service,
@@ -275,6 +277,7 @@ class TestInstagramPipelineAndIdempotency:
             payload=INSTAGRAM_TEXT_MESSAGE_PAYLOAD,
         )
 
+        route_payload(raw_event.payload)
         result = process_instagram_webhook_event_task(str(raw_event.id))
         assert result["messages_processed"] == 1
         assert result["new_messages_created"] == 1
@@ -432,9 +435,9 @@ class TestMetaClientResilienceAndSecurity:
         token = "EAAG1234567890abcdefghijklmnopqrstuvwxyz"
         masked = mask_token(token)
         assert token not in masked
-        assert masked == "EAAG...wxyz"
-        assert mask_token("") == "[EMPTY/SHORT]"
-        assert mask_token("short") == "[EMPTY/SHORT]"
+        assert masked == "[REDACTED]"
+        assert mask_token("") == "[MISSING]"
+        assert mask_token("short") == "[REDACTED]"
 
     @patch.object(requests.Session, "post")
     def test_client_handles_timeout(self, mock_session_post):
@@ -461,6 +464,7 @@ class TestMetaClientResilienceAndSecurity:
             client.post("me/messages", {"text": "test"})
 
         error_str = str(exc_info.value)
-        assert "Meta API error (190): Invalid OAuth access token" in error_str
+        assert "Meta API error (190)" in error_str
+        assert exc_info.value.code == 190
         # Ensure secret token is NOT in exception message
         assert "secret_token_never_expose" not in error_str

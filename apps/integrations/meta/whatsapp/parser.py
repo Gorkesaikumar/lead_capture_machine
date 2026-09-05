@@ -59,6 +59,9 @@ class WhatsAppInboundParser(InboundMessageParser):
                 if not isinstance(value, dict):
                     continue
 
+                metadata = value.get("metadata", {})
+                destination_id = str(metadata.get("phone_number_id", "")).strip()
+
                 # Build a mapping of wa_id -> profile name from contacts list
                 contacts_map: Dict[str, str] = {}
                 contacts = value.get("contacts", [])
@@ -115,6 +118,18 @@ class WhatsAppInboundParser(InboundMessageParser):
                         })
                         normalized_type = "DOCUMENT" if msg_type == "document" else msg_type.upper()
 
+                    elif msg_type == "location":
+                        location = msg.get("location", {})
+                        text = location.get("name") or location.get("address") or "Shared location"
+                        attachments_list.append({"type": "location", "raw": location})
+                        normalized_type = "OTHER"
+
+                    elif msg_type == "contacts":
+                        shared = msg.get("contacts", [])
+                        text = ", ".join(c.get("name", {}).get("formatted_name", "Contact") for c in shared if isinstance(c, dict)) or "Shared contacts"
+                        attachments_list.append({"type": "contacts", "raw": shared})
+                        normalized_type = "OTHER"
+
                     elif msg_type == "button":
                         btn_obj = msg.get("button", {})
                         text = btn_obj.get("text", "")
@@ -137,6 +152,7 @@ class WhatsAppInboundParser(InboundMessageParser):
                         channel="WHATSAPP",
                         external_message_id=message_id,
                         external_user_id=sender_wa_id,
+                        destination_id=destination_id,
                         sender_name=sender_name,
                         sender_username=None,
                         sender_phone=sender_wa_id,

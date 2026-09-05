@@ -15,10 +15,16 @@ class LeadsMetricsSerializer(serializers.Serializer):
     new_leads_today = serializers.IntegerField()
     instagram_leads = serializers.IntegerField()
     whatsapp_leads = serializers.IntegerField()
+    website_leads = serializers.IntegerField()
+    open_conversations = serializers.IntegerField()
     qualified_leads = serializers.IntegerField()
     booking_links_sent = serializers.IntegerField()
     converted_leads = serializers.IntegerField()
     lead_to_booking_conversion_rate = serializers.FloatField()
+    status_new = serializers.IntegerField()
+    status_contacted = serializers.IntegerField()
+    status_qualified = serializers.IntegerField()
+    status_lost = serializers.IntegerField()
 
 
 class BookingsMetricsSerializer(serializers.Serializer):
@@ -56,8 +62,9 @@ class PopularServiceItemSerializer(serializers.Serializer):
 class TimeseriesItemSerializer(serializers.Serializer):
     date = serializers.CharField()
     total = serializers.IntegerField()
-    completed = serializers.IntegerField()
-    cancelled = serializers.IntegerField()
+    completed = serializers.IntegerField(required=False)
+    cancelled = serializers.IntegerField(required=False)
+    converted = serializers.IntegerField(required=False)
 
 class DashboardSummarySerializer(serializers.Serializer):
     date_range = DateRangeInfoSerializer()
@@ -66,4 +73,5 @@ class DashboardSummarySerializer(serializers.Serializer):
     lead_source_breakdown = SourceBreakdownItemSerializer(many=True)
     popular_services = PopularServiceItemSerializer(many=True)
     timeseries = TimeseriesItemSerializer(many=True)
+    leads_timeseries = TimeseriesItemSerializer(many=True)
 

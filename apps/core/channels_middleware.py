@@ -25,12 +25,12 @@ def get_user_from_token(token_key: str):
     try:
         token = Token.objects.select_related("user").get(key=token_key)
         user = token.user
-        if user.is_active and user.is_staff:
+        if user.is_active:
             return user
         logger.warning("WebSocket auth rejected: user id=%s is inactive or not staff", user.id)
         return AnonymousUser()
     except Token.DoesNotExist:
-        logger.warning("WebSocket auth rejected: token key '%s...' does not exist or has expired", token_key[:5] if token_key else "")
+        logger.warning("WebSocket auth rejected: invalid or expired token")
         return AnonymousUser()
     except Exception as exc:
         logger.exception("Error authenticating WebSocket token: %s", exc)
@@ -45,11 +45,11 @@ class TokenAuthMiddleware(BaseMiddleware):
     async def __call__(self, scope, receive, send):
         # Only process websocket connections
         if scope["type"] == "websocket":
-            token_key = None
+            token_key = next((p.removeprefix("token.") for p in scope.get("subprotocols", []) if p.startswith("token.")), None)
 
             # 1. Try parsing token from query string (e.g. ws://host/ws/...?token=<key>)
             query_string = scope.get("query_string", b"").decode("utf-8")
-            if query_string:
+            if query_string and not token_key:
                 parsed_query = parse_qs(query_string)
                 token_list = parsed_query.get("token")
                 if token_list and len(token_list) > 0:
@@ -63,6 +63,7 @@ class TokenAuthMiddleware(BaseMiddleware):
                     token_key = auth_header.split("Token ", 1)[1].strip()
 
             if token_key:
+                scope["auth_token_key"] = token_key
                 scope["user"] = await get_user_from_token(token_key)
             else:
                 logger.warning("WebSocket auth rejected: Missing Token in query string and Authorization header")

@@ -1,16 +1,29 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery } from "@tanstack/react-query";
 import { apiClient } from "./client";
 
 export function useConversationMessages(conversationId?: string) {
-  return useQuery({
+  const query = useInfiniteQuery({
     queryKey: ["conversations", conversationId, "messages"],
-    queryFn: async () => {
-      if (!conversationId) return [];
-      const { data } = await apiClient.get(`/conversations/${conversationId}/messages/`);
-      if (Array.isArray(data)) return data;
-      return data.results || [];
-    },
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }) => (await apiClient.get(`/conversations/${conversationId}/messages/`, { params: { page: pageParam } })).data,
+    getNextPageParam: (last, pages) => last.next ? pages.length+1 : undefined,
     enabled: !!conversationId,
+    refetchInterval: 5000,
+  });
+  return { ...query, data: query.data?.pages.flatMap(page => page.results || page).reverse() || [] };
+}
+
+/**
+ * Fetches the paginated list of conversations for the global inbox.
+ */
+export function useInboxConversations(params?: { channel?: string; status?: string; assigned_user?: string; unread?: boolean; search?: string; page?: number }) {
+  return useQuery({
+    queryKey: ["conversations", "inbox", params],
+    queryFn: async () => {
+      const { data } = await apiClient.get("/conversations/", { params });
+      return data;
+    },
+    refetchInterval: 15000, // 15s fallback polling for the inbox list
   });
 }
 
@@ -73,6 +86,38 @@ export function useSendLeadBookingLink(leadId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads", leadId, "conversation"] });
       queryClient.invalidateQueries({ queryKey: ["leads", "detail", leadId] });
+    },
+  });
+}
+
+/**
+ * Updates a conversation's status.
+ */
+export function useUpdateConversationStatus(conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ status }: { status: string }) => {
+      const { data } = await apiClient.post(`/conversations/${conversationId}/status/`, { status });
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+  });
+}
+
+/**
+ * Assigns a conversation to a staff member.
+ */
+export function useAssignConversation(conversationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ staff_id }: { staff_id: string | null }) => {
+      const { data } = await apiClient.post(`/conversations/${conversationId}/assign/`, { staff_id });
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
   });
 }

@@ -14,11 +14,8 @@ from apps.integrations.meta.common.exceptions import ProviderSendError
 logger = logging.getLogger("apps.integrations.meta")
 
 
-def mask_token(token: Optional[str]) -> str:
-    """Masks sensitive access token for safe diagnostic logging."""
-    if not token or len(token) < 8:
-        return "[EMPTY/SHORT]"
-    return f"{token[:4]}...{token[-4:]}"
+def mask_token(token: str) -> str:
+    return "[REDACTED]" if token else "[MISSING]"
 
 
 class MetaGraphClient:
@@ -36,7 +33,11 @@ class MetaGraphClient:
         api_version: Optional[str] = None,
         timeout: Optional[int] = None,
         max_retries: int = 3,
+        graph_host: str = "graph.facebook.com",
     ):
+        if graph_host not in ("graph.facebook.com", "graph.instagram.com"):
+            raise ValueError("Unsupported Meta Graph host")
+        self.graph_host = graph_host
         self._access_token = access_token
         self.api_version = (
             api_version
@@ -58,7 +59,7 @@ class MetaGraphClient:
                 total=max_retries,
                 backoff_factor=0.5,
                 status_forcelist=[429, 500, 502, 503, 504],
-                allowed_methods=["POST", "GET"],
+                allowed_methods=["GET"],
                 raise_on_status=False,
             )
             adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -72,12 +73,7 @@ class MetaGraphClient:
 
     @property
     def base_url(self) -> str:
-        token = self.access_token
-        if token and (token.startswith("IG") or token.startswith("EAAG")):
-            # Instagram User Access Tokens (IGAA...) route to graph.instagram.com
-            if token.startswith("IG"):
-                return f"https://graph.instagram.com/{self.api_version}"
-        return f"https://graph.facebook.com/{self.api_version}"
+        return f"https://{self.graph_host}/{self.api_version}"
 
     def get(
         self,
@@ -111,10 +107,10 @@ class MetaGraphClient:
             response_json = response.json() if response.content else {}
         except requests.exceptions.Timeout as exc:
             logger.error("Meta Graph API timeout (%ss) on GET %s", self.timeout, endpoint)
-            raise ProviderSendError(f"Request timeout calling Meta API: {str(exc)}") from exc
+            raise ProviderSendError(f"Request timeout calling Meta API: [details redacted]") from exc
         except requests.RequestException as exc:
-            logger.error("Meta Graph API network error on GET %s: %s", endpoint, str(exc))
-            raise ProviderSendError(f"Network error calling Meta API: {str(exc)}") from exc
+            logger.error("Meta Graph API network error on GET %s: %s", endpoint, "[details redacted]")
+            raise ProviderSendError(f"Network error calling Meta API: [details redacted]") from exc
         except ValueError as exc:
             logger.error("Meta Graph API non-JSON response on GET %s: HTTP %s", endpoint, response.status_code)
             raise ProviderSendError("Invalid JSON response from Meta API.") from exc
@@ -129,9 +125,9 @@ class MetaGraphClient:
                 response.status_code,
                 error_code,
                 error_subcode,
-                error_message,
+                "[provider details redacted]",
             )
-            raise ProviderSendError(f"Meta API error ({error_code}): {error_message}")
+            raise ProviderSendError(f"Meta API error ({error_code}): provider rejected the request")
 
         return response_json
 
@@ -171,7 +167,7 @@ class MetaGraphClient:
         logger.debug(
             "Calling Meta Graph API: POST %s [token=%s]",
             url,
-            mask_token(token),
+            "[REDACTED]",
         )
 
         try:
@@ -184,10 +180,10 @@ class MetaGraphClient:
             response_json = response.json() if response.content else {}
         except requests.exceptions.Timeout as exc:
             logger.error("Meta Graph API timeout (%ss) on endpoint %s", self.timeout, endpoint)
-            raise ProviderSendError(f"Request timeout calling Meta API: {str(exc)}") from exc
+            raise ProviderSendError(f"Request timeout calling Meta API: [details redacted]") from exc
         except requests.RequestException as exc:
-            logger.error("Meta Graph API network error on endpoint %s: %s", endpoint, str(exc))
-            raise ProviderSendError(f"Network error calling Meta API: {str(exc)}") from exc
+            logger.error("Meta Graph API network error on endpoint %s: %s", endpoint, "[details redacted]")
+            raise ProviderSendError(f"Network error calling Meta API: [details redacted]") from exc
         except ValueError as exc:
             logger.error("Meta Graph API non-JSON response on endpoint %s: HTTP %s", endpoint, response.status_code)
             raise ProviderSendError("Invalid JSON response from Meta API.") from exc
@@ -202,10 +198,10 @@ class MetaGraphClient:
                 response.status_code,
                 error_code,
                 error_subcode,
-                error_message,
+                "[provider details redacted]",
             )
             raise ProviderSendError(
-                f"Meta API error ({error_code}): {error_message}",
+                f"Meta API error ({error_code}): provider rejected the request",
                 code=error_code,
                 subcode=error_subcode,
                 raw_error=error_data,

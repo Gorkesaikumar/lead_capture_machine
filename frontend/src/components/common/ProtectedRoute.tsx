@@ -2,9 +2,10 @@ import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { LoadingSkeleton } from './states/LoadingSkeleton';
 import { PageContainer } from './layout/PageContainer';
+import { Button } from '@/components/ui/button';
 
 export default function ProtectedRoute() {
-  const { user, isLoading } = useAuth();
+  const { user, isLoading, logout } = useAuth();
   
   if (isLoading) {
     return (
@@ -22,6 +23,21 @@ export default function ProtectedRoute() {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (!user.workspace) {
+    if (user.is_superuser || user.is_staff) {
+      return <Navigate to="/admin" replace />;
+    }
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+        <div className="max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center space-y-4">
+          <h1 className="text-xl font-semibold text-slate-900">Workspace access required</h1>
+          <p className="text-sm text-slate-600">Your account does not have access to an active workspace. Ask your workspace owner to invite you or restore your access.</p>
+          <Button onClick={logout}>Sign out</Button>
+        </div>
+      </div>
+    );
   }
 
   return <Outlet />;

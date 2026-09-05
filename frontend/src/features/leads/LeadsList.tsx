@@ -9,6 +9,7 @@ import { Users } from "lucide-react";
 import { LeadsFilterBar } from "./components/LeadsFilterBar";
 import { LeadsTable } from "./components/LeadsTable";
 import { LeadsMobileList } from "./components/LeadsMobileList";
+import { CreateLeadDialog } from "./components/CreateLeadDialog";
 import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 export default function LeadsList() {
@@ -38,7 +39,7 @@ export default function LeadsList() {
 
   const leads = data?.results || [];
   const totalCount = data?.count || 0;
-  const totalPages = Math.ceil(totalCount / 10); // assuming default limit is 10
+  const totalPages = Math.ceil(totalCount / 20); // DRF PAGE_SIZE is 20
 
   return (
     <PageContainer>
@@ -46,8 +47,11 @@ export default function LeadsList() {
         title="Leads Pipeline"
         description="Manage incoming inquiries and track conversions."
         actions={
-          <div className="bg-blue-50 text-blue-700 px-3 py-1 rounded-md text-sm font-medium border border-blue-100">
-            {totalCount} Total
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-50 text-blue-700 px-3 py-1.5 rounded-md text-sm font-medium border border-blue-100 flex items-center h-9">
+              {totalCount} Total
+            </div>
+            <CreateLeadDialog />
           </div>
         }
       />

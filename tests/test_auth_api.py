@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive integration tests for Authentication API endpoints.
 """
@@ -55,9 +56,9 @@ class TestAuthenticationAPI:
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         data = response.json()
-        # New structured error envelope: code = authentication_required
         assert data["status"] == "error"
-        assert data["code"] in ("authentication_required", "authentication_error")
+        assert data["code"] == "invalid_credentials"
+        assert data["message"] == "Invalid email or password."
 
     def test_login_unknown_email(self, api_client):
         """8. Login rejection with non-existent email returns generic message."""
@@ -69,7 +70,8 @@ class TestAuthenticationAPI:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         data = response.json()
         assert data["status"] == "error"
-        assert data["code"] in ("authentication_required", "authentication_error")
+        assert data["code"] == "invalid_credentials"
+        assert data["message"] == "Invalid email or password."
 
     def test_login_inactive_user_rejected(self, api_client):
         """9. Inactive admin login is rejected."""
@@ -86,6 +88,9 @@ class TestAuthenticationAPI:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         data = response.json()
         assert data["status"] == "error"
+
+        assert data["code"] == "invalid_credentials"
+        assert data["message"] == "Invalid email or password."
 
     def test_authenticated_me_endpoint(self, authenticated_client, admin_user):
         """10. Authenticated /me endpoint returns user details."""
@@ -168,14 +173,14 @@ class TestAuthenticationAPI:
         assert "password" not in login_text.lower() or "TestAdminPassword123!" not in login_text
         assert "pbkdf2" not in login_text
         assert "argon2" not in login_text
-        assert "is_superuser" not in login_resp.json()["data"]["user"]
+        assert isinstance(login_resp.json()["data"]["user"]["is_superuser"], bool)
         assert "groups" not in login_resp.json()["data"]["user"]
 
         me_resp = authenticated_client.get(ME_URL)
         me_text = me_resp.content.decode("utf-8")
         assert "password" not in me_text.lower()
         assert "pbkdf2" not in me_text
-        assert "is_superuser" not in me_resp.json()
+        assert isinstance(me_resp.json()["is_superuser"], bool)
 
     def test_login_rate_throttling(self, api_client):
         """16. Exceeding login rate limit triggers 429 Too Many Requests."""

@@ -15,12 +15,17 @@ from apps.conversations.serializers import (
 from apps.conversations.services import ConversationService
 
 
-class ConversationViewSet(viewsets.ModelViewSet):
+from apps.core.mixins import TenantViewSetMixin
+
+
+class ConversationViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    queryset = Conversation.objects.all()
     """
     Admin endpoints for managing Instagram and WhatsApp conversations.
     """
 
-    permission_classes = [IsAuthenticated]
+    from apps.organizations.permissions import IsOrganizationMember
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -30,6 +35,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         "channel",
         "status",
         "customer",
+        "assigned_user",
     ]
     search_fields = [
         "customer__display_name",
@@ -44,13 +50,26 @@ class ConversationViewSet(viewsets.ModelViewSet):
         "created_at",
     ]
     ordering = ["-last_message_at"]
-    http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def create(self, request, *args, **kwargs):
+        return Response({"detail": "Conversations are created from incoming channel messages or website forms."}, status=405)
+
+    @action(detail=True, methods=["post"], url_path="send")
+    def send(self, request, pk=None):
+        from .send_serializers import SendMessageSerializer
+        from .outbound import queue_message
+        serializer = SendMessageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = dict(serializer.validated_data)
+        request_id = payload.pop("request_id", "")
+        message = queue_message(self.get_object(), payload, request.user, request_id)
+        return Response(MessageSerializer(message).data, status=202)
 
     def get_queryset(self):
         queryset = (
-            Conversation.objects.filter(is_deleted=False)
-            .select_related("customer")
-            .prefetch_related("messages")
+            super().get_queryset().filter(is_deleted=False)
+            .select_related("customer", "lead", "lead__assigned_staff", "assigned_user")
         )
 
         # Custom filter: unread only
@@ -80,7 +99,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         Returns paginated message history for this conversation.
         """
         conversation = self.get_object()
-        messages_qs = conversation.messages.all().order_by("created_at")
+        messages_qs = conversation.messages.all().order_by("-created_at", "-id")
 
         page = self.paginate_queryset(messages_qs)
         if page is not None:
@@ -104,5 +123,56 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 "message": "Conversation marked as read.",
                 "unread_count": 0,
             },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="status")
+    def update_status(self, request, pk=None):
+        """
+        POST /api/v1/conversations/{id}/status/
+        Updates conversation status (e.g. ACTIVE, CLOSED).
+        """
+        conversation = self.get_object()
+        new_status = request.data.get("status")
+        if new_status not in dict(Conversation.Status.choices):
+            return Response({"detail": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+
+        conversation.status = new_status
+        conversation.save(update_fields=["status", "updated_at"])
+
+        return Response(
+            self.get_serializer(conversation).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"], url_path="assign")
+    def assign_staff(self, request, pk=None):
+        """
+        POST /api/v1/conversations/{id}/assign/
+        Assigns an admin/staff member to this conversation.
+        """
+        conversation = self.get_object()
+        staff_id = request.data.get("staff_id")
+        staff_user = None
+
+        if staff_id:
+            from apps.accounts.models import User
+            try:
+                staff_user = User.objects.filter(
+                    id=staff_id,
+                    is_active=True,
+                    memberships__organization=request.organization, memberships__is_active=True
+                ).distinct().get()
+            except User.DoesNotExist:
+                return Response(
+                    {"detail": f"User with id {staff_id} not found or inactive."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        conversation.assigned_user = staff_user
+        conversation.save(update_fields=["assigned_user", "updated_at"])
+
+        return Response(
+            self.get_serializer(conversation).data,
             status=status.HTTP_200_OK,
         )

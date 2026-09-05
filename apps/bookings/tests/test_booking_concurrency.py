@@ -1,4 +1,6 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 import concurrent.futures
+from django.db import connections
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 from django.conf import settings
@@ -24,15 +26,15 @@ class BookingConcurrencyTests(TransactionTestCase):
     """
 
     def setUp(self):
-        self.customer = Customer.objects.create(
+        self.customer = Customer.objects.create(organization=test_workspace(),
             display_name="Concurrency Test User",
             primary_phone="+1234567890",
         )
-        self.lead = Lead.objects.create(
+        self.lead = create_lead(
             customer=self.customer,
             status=Lead.Status.NEW,
         )
-        self.service = PhotographyService.objects.create(
+        self.service = PhotographyService.objects.create(organization=test_workspace(),
             name="Race Condition Service",
             base_price=500,
             duration_minutes=60,
@@ -41,7 +43,7 @@ class BookingConcurrencyTests(TransactionTestCase):
             is_active=True,
         )
         # Ensure the studio is open when we try to book
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=timezone.now().weekday(),
             start_time="00:00:00",
             end_time="23:59:59",
@@ -51,7 +53,7 @@ class BookingConcurrencyTests(TransactionTestCase):
         studio_tz = ZoneInfo(getattr(settings, "TIME_ZONE", "UTC"))
         self.target_time = timezone.now().astimezone(studio_tz).replace(hour=12, minute=0, second=0, microsecond=0) + timedelta(days=7)
         if self.target_time.weekday() != timezone.now().weekday():
-            WeeklyAvailability.objects.create(
+            WeeklyAvailability.objects.create(organization=test_workspace(),
                 weekday=self.target_time.weekday(),
                 start_time="00:00:00",
                 end_time="23:59:59",
@@ -64,11 +66,11 @@ class BookingConcurrencyTests(TransactionTestCase):
         the exact same time slot simultaneously.
         Result: One succeeds, one fails with SlotConflictError due to ExclusionConstraint.
         """
-        customer2 = Customer.objects.create(
+        customer2 = Customer.objects.create(organization=test_workspace(),
             display_name="Concurrency Test User 2",
             primary_phone="+1234567891",
         )
-        lead2 = Lead.objects.create(customer=customer2, status=Lead.Status.NEW)
+        lead2 = create_lead(customer=customer2, status=Lead.Status.NEW)
         
         link1 = BookingLink.objects.create(
             lead=self.lead,
@@ -94,6 +96,8 @@ class BookingConcurrencyTests(TransactionTestCase):
                 return True
             except SlotConflictError:
                 return False
+            finally:
+                connections.close_all()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future1 = executor.submit(attempt_booking, link1.token)
@@ -131,6 +135,8 @@ class BookingConcurrencyTests(TransactionTestCase):
                 return f"VALIDATION_ERROR: {str(e)}"
             except SlotConflictError:
                 return "SLOT_CONFLICT"
+            finally:
+                connections.close_all()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             future1 = executor.submit(attempt_booking, link.token)

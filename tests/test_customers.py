@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Customer domain models, CustomerResolutionService, concurrency/idempotency, and API endpoints.
 """
@@ -15,7 +16,7 @@ from apps.customers.services import CustomerResolutionService
 class TestCustomerModelsAndResolution:
     def test_customer_creation(self):
         """Customer model creates with UUID pk and timestamps."""
-        customer = Customer.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(),
             display_name="Priya Sharma",
             primary_phone="+919876543210",
             email="priya@example.com",
@@ -28,7 +29,7 @@ class TestCustomerModelsAndResolution:
 
     def test_customer_identity_channel_constraint(self):
         """Database enforces unique constraint on (channel, external_user_id)."""
-        customer = Customer.objects.create(display_name="Rahul Verma")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Rahul Verma")
         CustomerIdentity.objects.create(
             customer=customer,
             channel=CustomerIdentity.Channel.INSTAGRAM,
@@ -37,7 +38,7 @@ class TestCustomerModelsAndResolution:
         )
 
         # Attempt to insert identical (channel, external_user_id) under different customer
-        customer2 = Customer.objects.create(display_name="Rahul Clone")
+        customer2 = Customer.objects.create(organization=test_workspace(), display_name="Rahul Clone")
         with pytest.raises(IntegrityError):
             CustomerIdentity.objects.create(
                 customer=customer2,
@@ -48,7 +49,7 @@ class TestCustomerModelsAndResolution:
 
     def test_customer_soft_delete(self):
         """Soft delete marks is_deleted and records deleted_at timestamp."""
-        customer = Customer.objects.create(display_name="Sneha Rao")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Sneha Rao")
         customer.soft_delete()
         customer.refresh_from_db()
         assert customer.is_deleted is True
@@ -67,7 +68,7 @@ class TestCustomerModelsAndResolution:
             username="ananya_art",
             display_name="Ananya Roy",
             metadata={"bio": "Artist and mother"},
-        )
+         organization=test_workspace())
         assert created is True
         assert customer.display_name == "Ananya Roy"
         assert customer.identities.count() == 1
@@ -85,7 +86,7 @@ class TestCustomerModelsAndResolution:
             external_user_id="919876500000",
             phone_number="+919876500000",
             display_name="Karan Johar",
-        )
+         organization=test_workspace())
         assert created1 is True
 
         # Second resolution with updated handle/meta
@@ -94,7 +95,7 @@ class TestCustomerModelsAndResolution:
             external_user_id="919876500000",
             display_name="Karan Johar",
             metadata={"preferred_language": "en"},
-        )
+         organization=test_workspace())
         assert created2 is False
         assert customer1.id == customer2.id
 
@@ -122,7 +123,7 @@ class TestCustomerModelsAndResolution:
                     external_user_id=external_user_id,
                     username=f"user_{thread_id}",
                     metadata={"thread": thread_id},
-                )
+                 organization=test_workspace())
                 return cust.id, created
             finally:
                 close_old_connections()
@@ -149,7 +150,7 @@ class TestCustomerModelsAndResolution:
 class TestCustomerAPI:
     def test_customer_list_and_search(self, authenticated_client):
         """Admin can list and search customers."""
-        cust1 = Customer.objects.create(display_name="Anita Desai", primary_phone="+919811111111")
+        cust1 = Customer.objects.create(organization=test_workspace(), display_name="Anita Desai", primary_phone="+919811111111")
         CustomerIdentity.objects.create(
             customer=cust1,
             channel="INSTAGRAM",
@@ -157,7 +158,7 @@ class TestCustomerAPI:
             username="anita_d",
         )
 
-        cust2 = Customer.objects.create(display_name="Vikram Seth", primary_phone="+919822222222")
+        cust2 = Customer.objects.create(organization=test_workspace(), display_name="Vikram Seth", primary_phone="+919822222222")
         CustomerIdentity.objects.create(
             customer=cust2,
             channel="WHATSAPP",
@@ -184,7 +185,7 @@ class TestCustomerAPI:
 
     def test_customer_detail_and_update(self, authenticated_client):
         """Admin can retrieve detail and update customer notes/phone."""
-        customer = Customer.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(),
             display_name="Dev Patel",
             notes="Initial inquiry",
         )
@@ -208,7 +209,7 @@ class TestCustomerAPI:
 
     def test_customer_summaries_endpoints(self, authenticated_client):
         """Verify conversations, leads, and bookings summary endpoints."""
-        customer = Customer.objects.create(display_name="Zoya Akhtar")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Zoya Akhtar")
 
         conv_resp = authenticated_client.get(f"/api/v1/customers/{customer.id}/conversations/")
         assert conv_resp.status_code == status.HTTP_200_OK

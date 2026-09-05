@@ -20,6 +20,7 @@ class Weekday(models.IntegerChoices):
 
 
 class WeeklyAvailability(CoreModel):
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     """
     Standard recurring weekly operating hours.
     Supports multiple active periods per day (e.g. 09:00-13:00 and 14:00-18:00 for lunch breaks).
@@ -52,6 +53,7 @@ class WeeklyAvailability(CoreModel):
 
 
 class SpecialAvailability(CoreModel):
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     """
     Overrides standard weekly availability for a specific date (e.g. holiday special opening hours).
     """
@@ -80,6 +82,7 @@ class SpecialAvailability(CoreModel):
 
 
 class BlockedPeriod(CoreModel):
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     """
     Blocks studio time for maintenance, personal leaves, private events, or specific service restrictions.
     """
@@ -120,11 +123,12 @@ class BlockedPeriod(CoreModel):
 
 
 class HolidayClosure(CoreModel):
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     """
     Marks the studio as completely closed on a specific calendar date (e.g. National Holidays, Diwali, Christmas).
     """
 
-    date = models.DateField(_("closure date"), unique=True, db_index=True)
+    date = models.DateField(_("closure date"), db_index=True)
     name = models.CharField(
         _("holiday / closure name"),
         max_length=255,

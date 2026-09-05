@@ -15,14 +15,17 @@ from apps.services.serializers import (
     PhotographyServiceListSerializer,
 )
 from apps.services.services import PhotographyServiceManager
+from apps.core.mixins import TenantViewSetMixin
 
 
-class PhotographyServiceViewSet(viewsets.ModelViewSet):
+class PhotographyServiceViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    queryset = PhotographyService.objects.all()
     """
     CRUD endpoints for studio photography services.
     """
 
-    permission_classes = [IsAuthenticated]
+    from apps.organizations.permissions import IsOrganizationMember
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -35,7 +38,7 @@ class PhotographyServiceViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
-        return PhotographyService.objects.filter(is_deleted=False).prefetch_related("packages")
+        return super().get_queryset().filter(is_deleted=False).prefetch_related("packages")
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -45,7 +48,7 @@ class PhotographyServiceViewSet(viewsets.ModelViewSet):
         return PhotographyServiceCreateUpdateSerializer
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_service_changed(
             entity_type="PhotographyService",
             entity_id=instance.id,
@@ -55,7 +58,7 @@ class PhotographyServiceViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_service_changed(
             entity_type="PhotographyService",
             entity_id=instance.id,
@@ -93,12 +96,14 @@ class PhotographyServiceViewSet(viewsets.ModelViewSet):
         return Response(PhotographyServiceDetailSerializer(service).data, status=status.HTTP_200_OK)
 
 
-class PackageViewSet(viewsets.ModelViewSet):
+class PackageViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    queryset = Package.objects.all()
     """
     CRUD endpoints for service pricing tiers and packages.
     """
 
-    permission_classes = [IsAuthenticated]
+    from apps.organizations.permissions import IsOrganizationMember
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     serializer_class = PackageSerializer
     filter_backends = [
         DjangoFilterBackend,
@@ -112,7 +117,13 @@ class PackageViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "put", "delete", "head", "options"]
 
     def get_queryset(self):
-        return Package.objects.filter(is_deleted=False).select_related("service")
+        # We need a custom get_queryset for Package because TenantViewSetMixin
+        # expects an 'organization' field by default.
+        # Package resolves its org via its parent service.
+        qs = Package.objects.filter(is_deleted=False).select_related("service")
+        if not hasattr(self.request, "organization") or not self.request.organization:
+            return qs.none()
+        return qs.filter(service__organization=self.request.organization)
 
     def perform_create(self, serializer):
         instance = serializer.save()

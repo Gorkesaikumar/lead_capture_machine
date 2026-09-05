@@ -1,11 +1,23 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "@/api/client";
+
+interface Workspace {
+  id: string;
+  name: string;
+  role: "OWNER" | "ADMIN" | "MEMBER";
+}
 
 interface AdminUser {
   id: string | number;
   email: string;
   name?: string;
+  full_name?: string;
+  is_active?: boolean;
+  is_staff?: boolean;
+  is_superuser?: boolean;
+  workspace: Workspace | null;
   role: "ADMIN";
 }
 
@@ -19,6 +31,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AdminUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -32,9 +45,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       
       const response = await apiClient.get("/auth/me/");
-      setUser({ ...response.data, role: "ADMIN" });
+      const workspaces: Workspace[] = response.data.workspaces || [];
+      const workspace = workspaces.find(item => item.id === localStorage.getItem("organizationId"))
+        || workspaces[0] || null;
+      if (workspace) {
+        localStorage.setItem("organizationId", workspace.id);
+      } else {
+        localStorage.removeItem("organizationId");
+      }
+      setUser({ ...response.data, workspace, role: "ADMIN" });
     } catch {
       localStorage.removeItem("authToken");
+      localStorage.removeItem("organizationId");
+      queryClient.clear();
       setUser(null);
     } finally {
       setIsLoading(false);
@@ -47,6 +70,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (token: string) => {
     setIsLoading(true);
+    await queryClient.cancelQueries();
+    queryClient.clear();
+    localStorage.removeItem("organizationId");
     await fetchMe(token);
   };
 
@@ -57,6 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Ignore network errors on logout
     } finally {
       localStorage.removeItem("authToken");
+      localStorage.removeItem("organizationId");
+      queryClient.clear();
       setUser(null);
     }
   };

@@ -34,6 +34,12 @@ class PackageSerializer(serializers.ModelSerializer):
         )
         read_only_fields = ("id", "slug", "effective_duration_minutes", "created_at", "updated_at")
 
+    def validate_service(self, value):
+        request = self.context.get("request")
+        if request and value.organization_id != request.organization.id:
+            raise serializers.ValidationError("Service not found in this workspace.")
+        return value
+
     def validate_price(self, value):
         if value < Decimal("0.00"):
             raise serializers.ValidationError("Price cannot be negative.")

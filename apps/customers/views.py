@@ -17,12 +17,17 @@ from apps.customers.serializers import (
 )
 
 
-class CustomerViewSet(viewsets.ModelViewSet):
+from apps.core.mixins import TenantViewSetMixin
+
+
+class CustomerViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    queryset = Customer.objects.all()
     """
     CRUD and summary endpoints for Customer management (Admin only).
     """
 
-    permission_classes = [IsAuthenticated]
+    from apps.organizations.permissions import IsOrganizationMember
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,
@@ -49,7 +54,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return (
-            Customer.objects.filter(is_deleted=False)
+            super().get_queryset().filter(is_deleted=False)
             .prefetch_related("identities")
             .distinct()
         )

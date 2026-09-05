@@ -104,7 +104,7 @@ class InstagramInboundParser(InboundMessageParser):
                     sender = event.get("sender", {})
                     recipient = event.get("recipient", {})
                     sender_id = str(sender.get("id", "")).strip()
-                    recipient_id = str(recipient.get("id", "")).strip()
+                    recipient_id = str(recipient.get("id") or entry.get("id") or "").strip()
                     
                     logger.info(
                         "[DIAGNOSTIC] Parsed INSTAGRAM standard message. sender.id=%s recipient.id=%s mid=%s",
@@ -153,6 +153,7 @@ class InstagramInboundParser(InboundMessageParser):
                         channel="INSTAGRAM",
                         external_message_id=message_id,
                         external_user_id=sender_id,
+                        destination_id=recipient_id,
                         sender_name=None,
                         sender_username=None,
                         sender_phone=None,
@@ -180,7 +181,7 @@ class InstagramInboundParser(InboundMessageParser):
                         sender = value.get("sender", {})
                         recipient = value.get("recipient", {})
                         sender_id = str(sender.get("id", "")).strip()
-                        recipient_id = str(recipient.get("id", "")).strip()
+                        recipient_id = str(recipient.get("id") or entry.get("id") or "").strip()
                         
                         logger.info(
                             "[DIAGNOSTIC] Parsed INSTAGRAM changes array message. sender.id=%s recipient.id=%s mid=%s",
@@ -199,6 +200,7 @@ class InstagramInboundParser(InboundMessageParser):
                             channel="INSTAGRAM",
                             external_message_id=message_id,
                             external_user_id=sender_id,
+                            destination_id=recipient_id,
                             sender_name=None,
                             sender_username=None,
                             sender_phone=None,

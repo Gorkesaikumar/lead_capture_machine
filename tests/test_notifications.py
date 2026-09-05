@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import configure_channel, test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive tests for Notifications orchestration module.
 Tests idempotency, provider selection, domain notification helpers, transient retries,
@@ -31,38 +32,48 @@ from apps.services.models import PhotographyService
 
 @pytest.fixture
 def admin_user():
-    return User.objects.create_superuser(
+    user = User.objects.create_superuser(
         email="studio_admin@v4studio.com",
         password="AdminSecurePassword123!",
         full_name="Studio Admin",
     )
+    add_member(user)
+    return user
 
 
 @pytest.fixture
 def wa_customer():
-    cust = Customer.objects.create(display_name="Sarah Jenkins", email="sarah@example.com")
+    cust = Customer.objects.create(organization=test_workspace(), display_name="Sarah Jenkins", email="sarah@example.com")
     CustomerIdentity.objects.create(
         customer=cust,
         channel=CustomerIdentity.Channel.WHATSAPP,
         external_user_id="919876543210",
     )
+    channel = cust.identities.get().channel
+    configure_channel(cust.organization, channel)
+    conversation = Conversation.objects.create(organization=cust.organization, customer=cust, channel=channel)
+    Message.objects.create(conversation=conversation, direction="INBOUND", text="Hello", provider_timestamp=timezone.now(), external_message_id="in-" + str(cust.pk))
     return cust
 
 
 @pytest.fixture
 def ig_customer():
-    cust = Customer.objects.create(display_name="Michael Scott", email="michael@example.com")
+    cust = Customer.objects.create(organization=test_workspace(), display_name="Michael Scott", email="michael@example.com")
     CustomerIdentity.objects.create(
         customer=cust,
         channel=CustomerIdentity.Channel.INSTAGRAM,
-        external_user_id="ig_user_102030",
+        external_user_id="1784102030999",
     )
+    channel = cust.identities.get().channel
+    configure_channel(cust.organization, channel)
+    conversation = Conversation.objects.create(organization=cust.organization, customer=cust, channel=channel)
+    Message.objects.create(conversation=conversation, direction="INBOUND", text="Hello", provider_timestamp=timezone.now(), external_message_id="in-" + str(cust.pk))
     return cust
 
 
 @pytest.fixture
 def photography_service():
-    return PhotographyService.objects.create(
+    return PhotographyService.objects.create(organization=test_workspace(),
         name="Maternity Portrait Session",
         slug="maternity-portrait-session",
         duration_minutes=60,
@@ -87,7 +98,7 @@ def test_booking(wa_customer, photography_service):
 class TestNotificationIdempotency:
     """Tests idempotency key deduplication to prevent duplicate message sends."""
 
-    @patch.object(WhatsAppMessagingProvider, "send_booking_link_message")
+    @patch.object(WhatsAppMessagingProvider, "send_text_message")
     def test_idempotent_duplicate_call_returns_existing_record_without_resend(
         self, mock_send, wa_customer
     ):
@@ -126,7 +137,7 @@ class TestNotificationIdempotency:
 class TestNotificationProviderRouting:
     """Tests provider routing for Instagram vs WhatsApp channels."""
 
-    @patch.object(InstagramMessagingProvider, "send_booking_link_message")
+    @patch.object(InstagramMessagingProvider, "send_text_message")
     def test_routes_to_instagram_provider(self, mock_ig_send, ig_customer):
         mock_ig_send.return_value = OutboundResult(success=True, external_message_id="ig_mid_555")
 
@@ -140,14 +151,11 @@ class TestNotificationProviderRouting:
 
         assert notif.status == Notification.Status.SENT
         assert notif.external_message_id == "ig_mid_555"
-        mock_ig_send.assert_called_once_with(
-            recipient_id="ig_user_102030",
-            booking_url="https://studio.com/book/ig_token",
-            customer_name="Michael Scott",
-            service_name="Fashion Shoot",
-        )
+        mock_ig_send.assert_called_once()
+        assert mock_ig_send.call_args.args[0] == "1784102030999"
+        assert "https://studio.com/book/ig_token" in mock_ig_send.call_args.args[1]
 
-    @patch.object(WhatsAppMessagingProvider, "send_booking_link_message")
+    @patch.object(WhatsAppMessagingProvider, "send_text_message")
     def test_routes_to_whatsapp_provider(self, mock_wa_send, wa_customer):
         mock_wa_send.return_value = OutboundResult(success=True, external_message_id="wamid.WA_LINK_77")
 
@@ -228,19 +236,18 @@ class TestTransientRetryAndPermanentErrorHandling:
             error_message="Meta API Error 131026: Message undeliverable to recipient phone",
         )
 
-        with pytest.raises(PermanentNotificationError):
-            NotificationService.send_notification(
-                customer=wa_customer,
-                channel="WHATSAPP",
-                notification_type="GENERAL",
-                context={"text": "Hello"},
-                async_delivery=False,
-            )
+        NotificationService.send_notification(
+            customer=wa_customer,
+            channel="WHATSAPP",
+            notification_type="GENERAL",
+            context={"text": "Hello"},
+            async_delivery=False,
+        )
 
         notif = Notification.objects.filter(customer=wa_customer).first()
         assert notif.status == Notification.Status.FAILED
         assert notif.is_permanent_error is True
-        assert "131026" in notif.error_message
+        assert "Meta did not accept" in notif.error_message
 
     @patch.object(WhatsAppMessagingProvider, "send_text_message")
     def test_transient_error_raises_transient_exception_for_celery_retry(self, mock_send, wa_customer):
@@ -250,19 +257,20 @@ class TestTransientRetryAndPermanentErrorHandling:
             error_message="Connection timed out to Meta Graph API 503",
         )
 
-        with pytest.raises(TransientNotificationError):
-            NotificationService.send_notification(
-                customer=wa_customer,
-                channel="WHATSAPP",
-                notification_type="GENERAL",
-                context={"text": "Hello"},
-                async_delivery=False,
-            )
+        NotificationService.send_notification(
+            customer=wa_customer,
+            channel="WHATSAPP",
+            notification_type="GENERAL",
+            context={"text": "Hello"},
+            async_delivery=False,
+        )
 
         notif = Notification.objects.filter(customer=wa_customer).first()
         assert notif.status == Notification.Status.FAILED
-        assert notif.is_permanent_error is False
-        assert notif.retry_count == 1
+        assert notif.is_permanent_error is True
+        assert mock_send.call_count == 1
+        NotificationService.dispatch_now(notif.pk)
+        assert mock_send.call_count == 1
 
 
 @pytest.mark.django_db
@@ -282,7 +290,7 @@ class TestStatusLifecycleSynchronization:
         # 1. Simulate DELIVERED webhook
         NotificationService.update_status_by_external_id(
             external_message_id="wamid.SYNC_STATUS_999",
-            delivery_status="DELIVERED",
+            delivery_status="DELIVERED", organization=test_workspace(), channel="WHATSAPP",
         )
         notif.refresh_from_db()
         assert notif.status == Notification.Status.DELIVERED
@@ -291,7 +299,7 @@ class TestStatusLifecycleSynchronization:
         # 2. Simulate READ webhook
         NotificationService.update_status_by_external_id(
             external_message_id="wamid.SYNC_STATUS_999",
-            delivery_status="READ",
+            delivery_status="READ", organization=test_workspace(), channel="WHATSAPP",
         )
         notif.refresh_from_db()
         assert notif.status == Notification.Status.READ

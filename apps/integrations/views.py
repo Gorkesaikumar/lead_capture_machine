@@ -5,6 +5,8 @@ import json
 import logging
 from django.conf import settings
 from django.http import HttpResponse
+from django.shortcuts import redirect
+from apps.organizations.permissions import IsOrganizationMember, IsOrganizationAdmin
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -38,6 +40,7 @@ class MetaWebhookBaseView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
     default_channel = None
+    throttle_classes = []
 
     def get(self, request, *args, **kwargs):
         """
@@ -69,7 +72,15 @@ class MetaWebhookBaseView(APIView):
         )
 
         try:
-            MetaSignatureVerifier.verify_signature(raw_body, signature_header)
+            from .connection_service import app_credentials
+            provider = self.default_channel
+            if not provider:
+                try:
+                    obj = json.loads(raw_body).get("object")
+                    provider = "WHATSAPP" if obj == "whatsapp_business_account" else "INSTAGRAM"
+                except (ValueError, AttributeError, UnicodeDecodeError):
+                    provider = "INSTAGRAM"
+            MetaSignatureVerifier.verify_signature(raw_body, signature_header, app_secret=app_credentials(provider)[1])
         except SignatureVerificationError as exc:
             logger.warning("%s webhook signature verification failed: %s", self.default_channel, str(exc))
             return Response(
@@ -86,6 +97,11 @@ class MetaWebhookBaseView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if not isinstance(payload, dict) or not isinstance(payload.get("entry", []), list):
+            return Response({"detail": "Webhook payload must be an object with an entry array."}, status=400)
+        if any(not isinstance(entry, dict) for entry in payload.get("entry", [])):
+            return Response({"detail": "Invalid webhook entry."}, status=400)
+
         # Determine channel
         channel = self.default_channel
         if payload.get("object") == "whatsapp_business_account":
@@ -96,7 +112,7 @@ class MetaWebhookBaseView(APIView):
             channel = RawWebhookEvent.Channel.INSTAGRAM
 
         headers_dict = {
-            k: v for k, v in request.headers.items() if k.lower() != "authorization"
+            k: v for k, v in request.headers.items() if k.lower() in ("content-type", "x-hub-signature-256", "x-request-id")
         }
         event, is_new = InboundPipelineService.record_raw_event(
             channel=channel,
@@ -130,14 +146,9 @@ class MetaWebhookBaseView(APIView):
                 task_func.apply(args=[str(event.id)])
             else:
                 task_func.delay(str(event.id))
-        except Exception as exc:
-            logger.warning("Celery dispatch unavailable (%s), falling back to synchronous execution.", str(exc))
-            try:
-                InboundPipelineService.process_raw_webhook_event(event)
-                event.status = RawWebhookEvent.Status.PROCESSED
-                event.save(update_fields=["status", "updated_at"])
-            except Exception as sync_exc:
-                logger.exception("Synchronous fallback processing failed: %s", str(sync_exc))
+        except Exception:
+            logger.warning("Webhook queue unavailable; durable event retained for retry.")
+            return Response({"detail": "Webhook queue unavailable; retry delivery.", "event_id": str(event.pk)}, status=503)
 
         return Response(
             {
@@ -183,314 +194,63 @@ class OutboundMessageDispatchView(APIView):
     Admin-only endpoint to send outbound messages and booking links through Meta messaging providers.
     """
 
-    permission_classes = [IsActiveAdminUser]
+    from apps.organizations.permissions import IsOrganizationMember
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
     def post(self, request, *args, **kwargs):
+        from apps.conversations.models import Conversation
+        from apps.conversations.send_serializers import SendMessageSerializer
+        from apps.conversations.outbound import queue_message
+        from apps.conversations.serializers import MessageSerializer
         serializer = OutboundMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+        conv = Conversation.objects.filter(organization=request.organization, channel=data["channel"], customer__identities__external_user_id=data["recipient_id"], customer__identities__channel=data["channel"], is_deleted=False).first()
+        if not conv:
+            return Response({"detail": "Recipient conversation not found in this workspace."}, status=404)
+        content = {k: v for k, v in data.items() if k in ("text", "media_url", "media_type", "caption", "template")}
+        payload = SendMessageSerializer(data=content)
+        payload.is_valid(raise_exception=True)
+        message = queue_message(conv, dict(payload.validated_data), request.user, request.data.get("request_id", ""))
+        return Response(MessageSerializer(message).data, status=202)
 
-        channel = data["channel"]
-        recipient_id = data["recipient_id"]
-        text = data.get("text")
-        media_url = data.get("media_url")
-        media_type = data.get("media_type", "IMAGE")
-        caption = data.get("caption")
-
-        import uuid
-        local_message_id = f"local_{uuid.uuid4().hex}"
-
-        # Store outbound message in domain conversation history as SENDING
-        try:
-            from apps.customers.models import Customer
-            customer = Customer.objects.filter(identities__channel=channel, identities__external_user_id=recipient_id).first()
-            if customer:
-                from apps.conversations.models import Conversation
-                conv, _ = Conversation.objects.get_or_create(customer=customer, channel=channel)
-                ConversationService.store_outbound_message(
-                    conversation=conv,
-                    text=text or caption or "",
-                    external_message_id=local_message_id,
-                    message_type=media_type if media_url else "TEXT",
-                    attachment_metadata={"media_url": media_url} if media_url else {},
-                    raw_payload={},
-                )
-                from apps.conversations.models import Message
-                Message.objects.filter(external_message_id=local_message_id).update(delivery_status="SENDING")
-        except Exception as exc:
-            logger.warning("Failed to store outbound message history: %s", str(exc))
-
-        # Dispatch async task
-        from apps.integrations.tasks import (
-            send_instagram_message_task,
-            send_instagram_media_message_task,
-            send_whatsapp_message_task,
-        )
-        try:
-            if channel == "INSTAGRAM":
-                if media_url:
-                    send_instagram_media_message_task.delay(
-                        recipient_id=recipient_id,
-                        media_url=media_url,
-                        media_type=media_type,
-                        caption=caption,
-                        local_message_id=local_message_id,
-                    )
-                else:
-                    send_instagram_message_task.delay(
-                        recipient_id=recipient_id,
-                        text=text or "",
-                        local_message_id=local_message_id,
-                    )
-            else:
-                # Fallback to sync or async for whatsapp
-                # For now, just async whatsapp if it's text (assuming whatsapp media not fully implemented in views yet)
-                send_whatsapp_message_task.delay(
-                    recipient_phone=recipient_id,
-                    text=text or "",
-                    local_message_id=local_message_id,
-                )
-        except Exception as exc:
-            logger.error("Failed to dispatch async task: %s", str(exc))
-            # Fallback to sync if celery is down? Or just return error?
-            return Response(
-                {"detail": "Messaging queue unavailable."},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        return Response(
-            {
-                "success": True,
-                "external_message_id": local_message_id,
-                "channel": channel,
-            },
-            status=status.HTTP_200_OK,
-        )
 
 class IntegrationHealthView(APIView):
     """
-    Returns the health status of external integrations (Instagram, WhatsApp).
+    Returns the health status of external integrations (Instagram, WhatsApp) for the current organization.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
     def get(self, request, *args, **kwargs):
-        from django.conf import settings
-        from apps.integrations.models import RawWebhookEvent
-        import json
-
-        ig_token = getattr(settings, "INSTAGRAM_ACCESS_TOKEN", "")
-        wa_token = getattr(settings, "WHATSAPP_ACCESS_TOKEN", "")
-        wa_phone = getattr(settings, "WHATSAPP_PHONE_NUMBER_ID", "")
-        meta_secret = getattr(settings, "META_APP_SECRET", "")
-
-        # Fetch Instagram Events
-        ig_events = RawWebhookEvent.objects.filter(channel=RawWebhookEvent.Channel.INSTAGRAM)
-        ig_last = ig_events.order_by("-created_at").first()
-        ig_last_success = ig_events.filter(status=RawWebhookEvent.Status.PROCESSED).order_by("-processed_at").first()
-        
-        ig_events_received = ig_events.count()
-        ig_test_events = 0
-        ig_real_events = 0
-
-        # Diagnostics loop
-        for e in ig_events:
-            payload_str = json.dumps(e.payload) if e.payload else ""
-            if "random_mid" in payload_str or '"id": "12334"' in payload_str or e.event_id.startswith("hash_"):
-                ig_test_events += 1
-            else:
-                ig_real_events += 1
-
-        # Fetch WhatsApp Events
-        wa_events = RawWebhookEvent.objects.filter(channel=RawWebhookEvent.Channel.WHATSAPP)
-        wa_last = wa_events.order_by("-created_at").first()
-        wa_last_success = wa_events.filter(status=RawWebhookEvent.Status.PROCESSED).order_by("-processed_at").first()
-
-        wa_events_received = wa_events.count()
-        wa_test_events = 0
-        wa_real_events = 0
-
-        for e in wa_events:
-            payload_str = json.dumps(e.payload) if e.payload else ""
-            if e.event_id.startswith("hash_") or "test" in payload_str.lower():
-                wa_test_events += 1
-            else:
-                wa_real_events += 1
-
-        ig_status = "CONNECTED" if (ig_token and meta_secret) else "DISCONNECTED"
-        wa_status = "CONNECTED" if (wa_token and wa_phone and meta_secret) else "DISCONNECTED"
-
-        return Response({
-            "instagram": {
-                "platform": "instagram",
-                "connection_status": ig_status,
-                "webhook_status": "ACTIVE" if ig_last else "UNKNOWN",
-                "last_event_time": ig_last.created_at if ig_last else None,
-                "last_successful_communication": ig_last_success.processed_at if ig_last_success else None,
-                "requires_reconnect": ig_status == "DISCONNECTED",
-                "last_event_id": ig_last.event_id if ig_last else None,
-                "last_processing_result": ig_last.status if ig_last else None,
-                "last_error": None, # Error is not stored on model yet
-                "events_received_count": ig_events_received,
-                "real_message_events_count": ig_real_events,
-                "test_events_count": ig_test_events,
-            },
-            "whatsapp": {
-                "platform": "whatsapp",
-                "connection_status": wa_status,
-                "webhook_status": "ACTIVE" if wa_last else "UNKNOWN",
-                "last_event_time": wa_last.created_at if wa_last else None,
-                "last_successful_communication": wa_last_success.processed_at if wa_last_success else None,
-                "requires_reconnect": wa_status == "DISCONNECTED",
-                "last_event_id": wa_last.event_id if wa_last else None,
-                "last_processing_result": wa_last.status if wa_last else None,
-                "last_error": None,
-                "events_received_count": wa_events_received,
-                "real_message_events_count": wa_real_events,
-                "test_events_count": wa_test_events,
+        from apps.integrations.models import IntegrationConfig
+        from apps.conversations.outbound import configuration_status
+        result = {}
+        for provider in ("INSTAGRAM", "WHATSAPP"):
+            config = IntegrationConfig.objects.filter(organization=request.organization, provider=provider).first()
+            state, detail = configuration_status(config)
+            meta = config.metadata if config else {}
+            result[provider.lower()] = {
+                "platform": provider.lower(), "connection_status": state,
+                "status": state.lower(),
+                "diagnostic": detail, "webhook_status": "ACTIVE" if config and config.is_active and meta.get("webhook_subscribed") else "UNKNOWN",
+                "requires_reconnect": state not in ("CONNECTED", "CONFIGURED_UNVERIFIED"),
+                "last_event_time": meta.get("last_event_time"), "last_error": meta.get("last_error"),
+                "last_successful_communication": meta.get("last_accepted_at"),
+                "required_permissions": ["instagram_business_basic", "instagram_business_manage_messages"] if provider == "INSTAGRAM" else ["whatsapp_business_messaging", "whatsapp_business_management"],
+                **{k: meta.get(k) for k in ("username", "name", "profile_picture_url", "display_phone_number", "connected_at", "verified_name", "last_verified_at", "last_checked_at")},
+                "business_name": meta.get("name"),
             }
-        })
+        from apps.leads.models import LeadForm
+        result["website"] = {"status": "configured" if LeadForm.objects.filter(organization=request.organization, is_active=True).exists() else "not_configured"}
+        return Response(result)
 
 
-class InstagramOAuthStartView(APIView):
-    """
-    Generates the Meta Instagram Business Login URL and returns it to the client.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request, *args, **kwargs):
-        import secrets
-        from django.core.cache import cache
-        from django.conf import settings
-        from django.urls import reverse
-
-        app_id = getattr(settings, "META_APP_ID", "")
-        # Build absolute URI based on the request host (handles ngrok, localhost, and production)
-        base_url = request.build_absolute_uri('/')[:-1]
-        redirect_uri = f"{base_url}{reverse('api_v1:integrations:oauth-instagram-callback')}"
-        
-        state = secrets.token_urlsafe(32)
-        cache.set(f"oauth_state_{state}", True, timeout=600) # Valid for 10 mins
-
-        scope = "instagram_business_basic,instagram_business_manage_messages"
-        
-        auth_url = (
-            f"https://api.instagram.com/oauth/authorize"
-            f"?enable_fb_login=0"
-            f"&force_authentication=1"
-            f"&client_id={app_id}"
-            f"&redirect_uri={redirect_uri}"
-            f"&response_type=code"
-            f"&scope={scope}"
-            f"&state={state}"
-        )
-        return Response({"url": auth_url})
-
-
-class InstagramOAuthCallbackView(APIView):
-    """
-    Handles the OAuth callback from Meta, validates state, and exchanges code for access token.
-    """
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, *args, **kwargs):
-        import requests
-        import os
-        import dotenv
-        from django.core.cache import cache
-        from django.conf import settings
-        from django.shortcuts import redirect
-        from django.urls import reverse
-
-        code = request.query_params.get("code")
-        state = request.query_params.get("state")
-        error = request.query_params.get("error")
-        error_description = request.query_params.get("error_description")
-        
-        # Use frontend URL from settings, falling back safely
-        frontend_base = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
-        frontend_redirect_url = f"{frontend_base}/admin/integrations" 
-
-        if error:
-            logger.error("Meta OAuth Error: %s - %s", error, error_description)
-            return redirect(f"{frontend_redirect_url}?error={error}")
-
-        if not code or not state:
-            return redirect(f"{frontend_redirect_url}?error=missing_parameters")
-
-        # Validate state (CSRF protection)
-        if not cache.get(f"oauth_state_{state}"):
-            return redirect(f"{frontend_redirect_url}?error=invalid_state")
-        
-        # Invalidate state to prevent replay attacks
-        cache.delete(f"oauth_state_{state}")
-
-        app_id = getattr(settings, "META_APP_ID", "")
-        app_secret = getattr(settings, "META_APP_SECRET", "")
-        
-        base_url = request.build_absolute_uri('/')[:-1]
-        redirect_uri = f"{base_url}{reverse('api_v1:integrations:oauth-instagram-callback')}"
-
-        # 1. Exchange code for short-lived token
-        token_url = "https://api.instagram.com/oauth/access_token"
-        response = requests.post(token_url, data={
-            "client_id": app_id,
-            "client_secret": app_secret,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-            "code": code
-        })
-
-        if response.status_code != 200:
-            logger.error("Failed to exchange code: %s", response.text)
-            return redirect(f"{frontend_redirect_url}?error=token_exchange_failed")
-
-        data = response.json()
-        short_lived_token = data.get("access_token")
-        user_id = data.get("user_id")
-
-        if not short_lived_token or not user_id:
-            logger.error("Invalid token response: %s", data)
-            return redirect(f"{frontend_redirect_url}?error=invalid_token_payload")
-
-        # 2. Exchange short-lived token for long-lived token
-        ll_url = "https://graph.instagram.com/access_token"
-        ll_response = requests.get(ll_url, params={
-            "grant_type": "ig_exchange_token",
-            "client_secret": app_secret,
-            "access_token": short_lived_token
-        })
-
-        if ll_response.status_code == 200:
-            ll_data = ll_response.json()
-            final_token = ll_data.get("access_token", short_lived_token)
-        else:
-            logger.warning("Long-lived token exchange failed: %s", ll_response.text)
-            final_token = short_lived_token
-
-        # 3. Store the token and numeric user_id securely in .env
-        env_path = os.path.join(settings.BASE_DIR, ".env")
-        if os.path.exists(env_path):
-            dotenv.set_key(env_path, "INSTAGRAM_ACCESS_TOKEN", final_token)
-            dotenv.set_key(env_path, "INSTAGRAM_ACCOUNT_ID", str(user_id))
-            
-            # Update settings dynamically for the running process
-            # In a production environment, the server would need a restart, 
-            # but for this dev setup, we update it in memory.
-            settings.INSTAGRAM_ACCESS_TOKEN = final_token
-            settings.INSTAGRAM_ACCOUNT_ID = str(user_id)
-            
-        # 4. Subscribe the specific Instagram Professional account to the messages webhook
-        sub_url = f"https://graph.instagram.com/v20.0/{user_id}/subscribed_apps"
-        sub_response = requests.post(sub_url, data={
-            "subscribed_fields": "messages",
-            "access_token": final_token
-        })
-
-        if sub_response.status_code != 200:
-            logger.error("Failed to subscribe webhook for user %s: %s", user_id, sub_response.text)
-            return redirect(f"{frontend_redirect_url}?error=webhook_subscription_failed")
-        
-        return redirect(f"{frontend_redirect_url}?integration_success=instagram")
+# Connection lifecycle views live separately from webhook ingestion.
+from .connection_views import (
+    InstagramOAuthStartView, InstagramOAuthCallbackView, InstagramDisconnectView,
+    WhatsAppOAuthStartView, WhatsAppOAuthCallbackView, WhatsAppDisconnectView,
+    WhatsAppCompleteView, IntegrationVerifyView,
+)
 
 
 class InstagramDeauthorizeView(APIView):
@@ -500,26 +260,25 @@ class InstagramDeauthorizeView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
-        import os
-        import dotenv
-        from django.conf import settings
         from apps.integrations.meta.common.verifier import MetaSignatureVerifier
+        from apps.integrations.models import IntegrationConfig
 
         signed_request = request.data.get("signed_request")
         if not signed_request:
             return Response({"error": "Missing signed_request"}, status=status.HTTP_400_BAD_REQUEST)
 
-        payload = MetaSignatureVerifier.verify_signed_request(signed_request)
+        from .connection_service import app_credentials
+        payload = MetaSignatureVerifier.verify_signed_request(signed_request, app_secret=app_credentials("INSTAGRAM")[1])
         if not payload:
             return Response({"error": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Clear integration credentials
-        env_path = os.path.join(settings.BASE_DIR, ".env")
-        if os.path.exists(env_path):
-            dotenv.set_key(env_path, "INSTAGRAM_ACCESS_TOKEN", "")
-            settings.INSTAGRAM_ACCESS_TOKEN = ""
-            
-        logger.info(f"Meta App deauthorized by user_id: {payload.get('user_id')}")
+        user_id = payload.get("user_id")
+        # In a multi-tenant environment, we need to find which config has this account_id
+        # Note: metadata is JSONField, we can query by metadata__account_id
+        configs = IntegrationConfig.objects.filter(provider="INSTAGRAM", metadata__account_id=str(user_id))
+        configs.update(is_active=False, credentials={})
+
+        logger.info("Meta app deauthorization processed")
         return Response({"status": "success"})
 
 
@@ -530,34 +289,28 @@ class InstagramDataDeletionView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
-        import os
-        import dotenv
-        from django.conf import settings
         from apps.integrations.meta.common.verifier import MetaSignatureVerifier
+        from apps.integrations.models import IntegrationConfig
 
         signed_request = request.data.get("signed_request")
         if not signed_request:
             return Response({"error": "Missing signed_request"}, status=status.HTTP_400_BAD_REQUEST)
 
-        payload = MetaSignatureVerifier.verify_signed_request(signed_request)
+        from .connection_service import app_credentials
+        payload = MetaSignatureVerifier.verify_signed_request(signed_request, app_secret=app_credentials("INSTAGRAM")[1])
         if not payload:
             return Response({"error": "Invalid signature"}, status=status.HTTP_400_BAD_REQUEST)
 
         user_id = payload.get("user_id")
 
-        # Clear integration credentials
-        env_path = os.path.join(settings.BASE_DIR, ".env")
-        if os.path.exists(env_path):
-            dotenv.set_key(env_path, "INSTAGRAM_ACCESS_TOKEN", "")
-            settings.INSTAGRAM_ACCESS_TOKEN = ""
-
-        logger.info(f"Meta Data Deletion requested by user_id: {user_id}")
-        
-        # Meta expects a specific JSON response
-        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
-        confirmation_url = f"{frontend_url}/data-deletion-status?code={user_id}"
-
-        return Response({
-            "url": confirmation_url,
-            "confirmation_code": str(user_id)
-        })
+        from django.db import transaction
+        from django.urls import reverse
+        from apps.integrations.models import DataDeletionRequest
+        from apps.integrations.deletion import enqueue_deletion
+        with transaction.atomic():
+            configs = IntegrationConfig.objects.select_for_update().filter(provider="INSTAGRAM", metadata__account_id=str(user_id))
+            scopes = [{"organization": str(c.organization_id), "account": str(c.metadata.get("destination_id") or user_id)} for c in configs]
+            receipt = DataDeletionRequest.objects.create(scopes=scopes)
+            configs.delete()
+            transaction.on_commit(lambda: enqueue_deletion(receipt.pk))
+        return Response({"url": request.build_absolute_uri(reverse("api_v1:integrations:data-deletion-status", kwargs={"code": receipt.pk})), "confirmation_code": str(receipt.pk)})

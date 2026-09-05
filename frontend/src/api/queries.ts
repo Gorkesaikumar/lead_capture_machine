@@ -8,10 +8,16 @@ export interface AnalyticsSummary {
     new_leads_today: number;
     instagram_leads: number;
     whatsapp_leads: number;
+    website_leads: number;
+    open_conversations: number;
     qualified_leads: number;
     booking_links_sent: number;
     converted_leads: number;
     lead_to_booking_conversion_rate: number;
+    status_new: number;
+    status_contacted: number;
+    status_qualified: number;
+    status_lost: number;
   };
   bookings: {
     total_bookings: number;
@@ -41,6 +47,17 @@ export interface AnalyticsSummary {
     share_percentage: number;
     estimated_revenue: number;
   }>;
+  timeseries: Array<{
+    date: string;
+    total: number;
+    completed?: number;
+    cancelled?: number;
+  }>;
+  leads_timeseries: Array<{
+    date: string;
+    total: number;
+    converted?: number;
+  }>;
 }
 
 export function useDashboardSummary(preset = "this_month") {
@@ -50,6 +67,8 @@ export function useDashboardSummary(preset = "this_month") {
       const { data } = await apiClient.get<AnalyticsSummary>(`/analytics/dashboard/?preset=${preset}`);
       return data;
     },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000,
   });
 }
 
@@ -61,6 +80,7 @@ export function useRecentLeads() {
       const { data } = await apiClient.get("/leads/?limit=5&ordering=-created_at");
       return data.results || data;
     },
+    staleTime: 2 * 60 * 1000, // 2 minutes
   });
 }
 
@@ -72,5 +92,6 @@ export function useUpcomingBookings() {
       const { data } = await apiClient.get("/bookings/?limit=5&ordering=starts_at");
       return data.results || data;
     },
+    staleTime: 2 * 60 * 1000, // 2 minutes
   });
 }

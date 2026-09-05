@@ -39,12 +39,12 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     if (import.meta.env.VITE_WS_BASE_URL) {
       // Ensure there is no trailing slash on the base URL
       const baseUrl = import.meta.env.VITE_WS_BASE_URL.replace(/\/$/, "");
-      return `${baseUrl}/admin/dashboard/?token=${encodeURIComponent(token)}`;
+      return `${baseUrl}/admin/dashboard/?organization_id=${encodeURIComponent(localStorage.getItem("organizationId") || "")}`;
     }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host;
-    return `${protocol}//${host}/ws/admin/dashboard/?token=${encodeURIComponent(token)}`;
+    return `${protocol}//${host}/ws/admin/dashboard/?organization_id=${encodeURIComponent(localStorage.getItem("organizationId") || "")}`;
   }, []);
 
   const dispatchEvent = useCallback((event: RealtimeEvent) => {
@@ -151,7 +151,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   const connect = useCallback(() => {
-    if (!user) {
+    if (!user?.workspace) {
       setStatus("DISCONNECTED");
       return;
     }
@@ -170,7 +170,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     setStatus((prev) => (prev === "CONNECTED" ? "RECONNECTING" : "CONNECTING"));
 
     try {
-      const socket = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl, ["v4", `token.${localStorage.getItem("authToken")}`]);
       wsRef.current = socket;
 
       socket.onopen = () => {
@@ -209,11 +209,13 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       };
 
       socket.onclose = (event) => {
+        // Ignore sockets closed by effect cleanup or replaced by a new connection.
+        if (wsRef.current !== socket) return;
         if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
         wsRef.current = null;
 
         // If user is still logged in and socket was not closed cleanly due to logout or auth rejection
-        if (user && event.code !== 4001 && event.code !== 4003 && event.code !== 4403) {
+        if (user?.workspace && event.code !== 1000 && event.code !== 4001 && event.code !== 4003 && event.code !== 4403) {
           setStatus("RECONNECTING");
           const nextAttempt = reconnectAttemptsRef.current + 1;
           reconnectAttemptsRef.current = nextAttempt;
@@ -237,7 +239,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   }, [user, getWsUrl, dispatchEvent]);
 
   useEffect(() => {
-    if (user) {
+    if (user?.workspace) {
       connect();
     } else {
       if (wsRef.current) {

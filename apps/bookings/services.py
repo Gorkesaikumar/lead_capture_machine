@@ -61,15 +61,15 @@ class BookingLinkService:
                 created_by=created_by,
             )
 
-            # Transition lead status to BOOKING_LINK_SENT if not already booked/closed
-            if lead.status in [Lead.Status.NEW, Lead.Status.CONTACTED, Lead.Status.QUALIFIED]:
-                lead.status = Lead.Status.BOOKING_LINK_SENT
+            # Transition lead status to QUALIFIED if not already converted/lost
+            if lead.status in [Lead.Status.NEW, Lead.Status.CONTACTED]:
+                lead.status = Lead.Status.QUALIFIED
                 lead.save(update_fields=["status", "updated_at"])
 
             LeadActivity.objects.create(
                 lead=lead,
                 actor=created_by,
-                activity_type=LeadActivity.ActivityType.BOOKING_LINK_SENT,
+                activity_type=LeadActivity.ActivityType.NOTE_ADDED,
                 description=f"Generated booking link valid until {link.expires_at.strftime('%Y-%m-%d %H:%M')}",
                 metadata={"booking_link_id": str(link.id), "token": link.token},
             )
@@ -208,7 +208,7 @@ class BookingService:
             )
 
             # 4. Validate against studio operating hours and closures
-            studio_tz = AvailabilityService.get_studio_timezone()
+            studio_tz = AvailabilityService.get_studio_timezone(lead.organization)
             target_date = starts_at.astimezone(studio_tz).date()
 
             available_slots = AvailabilityService.get_available_slots(
@@ -224,7 +224,7 @@ class BookingService:
 
             if not matched_slot:
                 # Check whether conflict is due to an existing booking vs closed studio
-                overlap_exists = Booking.objects.filter(
+                overlap_exists = Booking.objects.filter(organization=lead.organization,
                     is_deleted=False,
                     status__in=[Booking.Status.PENDING, Booking.Status.CONFIRMED],
                     blocked_starts_at__lt=blocked_ends_at,
@@ -274,8 +274,8 @@ class BookingService:
             link.used_at = timezone.now()
             link.save(update_fields=["is_used", "used_at", "updated_at"])
 
-            # 7. Update Lead State to BOOKED
-            lead.status = Lead.Status.BOOKED
+            # 7. Update Lead State to CONVERTED
+            lead.status = Lead.Status.CONVERTED
             lead.service = effective_service
             lead.closed_at = timezone.now()
             lead.save(update_fields=["status", "service", "closed_at", "updated_at"])

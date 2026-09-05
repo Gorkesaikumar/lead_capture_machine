@@ -239,138 +239,38 @@ class NotificationService:
     # -------------------------------------------------------------------------
 
     @classmethod
-    def dispatch_now(cls, notification_id: str) -> Notification:
-        """
-        Executes actual outbound dispatch against the appropriate Meta provider.
-        Catches errors and classifies them as transient vs permanent.
-        """
-        with transaction.atomic():
-            try:
-                notification = Notification.objects.select_for_update(of=("self",)).get(id=notification_id)
-            except Notification.DoesNotExist:
-                logger.error("Notification %s does not exist for dispatch", notification_id)
-                raise PermanentNotificationError(f"Notification {notification_id} not found")
-
-            # Skip if already delivered or sent
-            if notification.status in [
-                Notification.Status.SENT,
-                Notification.Status.DELIVERED,
-                Notification.Status.READ,
-            ]:
-                logger.info("Notification %s already in state %s. Skipping dispatch.", notification_id, notification.status)
+    def dispatch_now(cls, notification_id):
+        from apps.conversations.outbound import queue_message, dispatch_message, window_open
+        from apps.integrations.models import IntegrationConfig
+        from rest_framework.exceptions import APIException
+        notification = Notification.objects.select_related("customer").get(pk=notification_id)
+        if notification.status in ("SENT", "DELIVERED", "READ") or notification.is_permanent_error:
+            return notification
+        conversation = Conversation.objects.filter(customer=notification.customer, organization=notification.customer.organization, channel=notification.channel).first()
+        if not conversation:
+            notification.mark_failed("Customer must contact the connected workspace channel first.", is_permanent=True)
+            return notification
+        payload = {"text": notification.rendered_text}
+        if notification.channel == "WHATSAPP" and not window_open(conversation):
+            config = IntegrationConfig.objects.filter(organization=conversation.organization, provider="WHATSAPP", is_active=True).first()
+            template = (config.metadata.get("notification_templates", {}) if config else {}).get(notification.notification_type)
+            if not template:
+                notification.mark_failed("An approved WhatsApp template must be configured for this notification type outside the 24-hour window.", is_permanent=True)
                 return notification
-
-            if notification.is_permanent_error:
-                logger.info("Notification %s has permanent error flag set. Skipping.", notification_id)
-                return notification
-
-            # Resolve recipient external user ID
-            identity = (
-                CustomerIdentity.objects.filter(
-                    customer=notification.customer,
-                    channel=notification.channel,
-                )
-                .order_by("-updated_at")
-                .first()
-            )
-            if not identity or not identity.external_user_id:
-                err = f"No {notification.channel} identity found for customer {notification.customer.id}"
-                logger.error(err)
-                notification.mark_failed(err, is_permanent=True)
-                return notification
-
-            recipient_id = identity.external_user_id
-            ctx = notification.context or {}
-            customer_name = ctx.get("customer_name") or notification.customer.display_name
-            service_name = ctx.get("service_name")
-            booking_url = ctx.get("booking_url")
-
-            logger.info(
-                "Dispatching Notification id=%s [%s:%s] to recipient=%s",
-                notification.id,
-                notification.channel,
-                notification.notification_type,
-                recipient_id,
-            )
-
-            # Route to correct provider
-            if notification.channel == Notification.Channel.INSTAGRAM:
-                provider = InstagramMessagingProvider()
-                if notification.notification_type == Notification.NotificationType.BOOKING_LINK and booking_url:
-                    result = provider.send_booking_link_message(
-                        recipient_id=recipient_id,
-                        booking_url=booking_url,
-                        customer_name=customer_name,
-                        service_name=service_name,
-                    )
-                else:
-                    result = provider.send_text_message(
-                        recipient_id=recipient_id,
-                        text=notification.rendered_text,
-                    )
-
-            elif notification.channel == Notification.Channel.WHATSAPP:
-                provider = WhatsAppMessagingProvider()
-                if notification.notification_type == Notification.NotificationType.BOOKING_LINK and booking_url:
-                    result = provider.send_booking_link_message(
-                        recipient_id=recipient_id,
-                        booking_url=booking_url,
-                        customer_name=customer_name,
-                        service_name=service_name,
-                    )
-                else:
-                    # If within 24h window send rendered text; otherwise send template or text
-                    result = provider.send_text_message(
-                        recipient_id=recipient_id,
-                        text=notification.rendered_text,
-                    )
+            payload = {"template": template}
+        try:
+            message = queue_message(conversation, payload, request_id=f"notification:{notification.pk}", dispatch=False)
+            message = dispatch_message(message.pk)
+            if message.delivery_status in ("SENT", "DELIVERED", "READ"):
+                notification.mark_sent(external_message_id=message.external_message_id)
+                if message.delivery_status in ("DELIVERED", "READ"):
+                    cls.update_status_by_external_id(message.external_message_id, message.delivery_status, organization=conversation.organization, channel=conversation.channel)
+                    notification.refresh_from_db()
             else:
-                err = f"Unsupported delivery channel: {notification.channel}"
-                notification.mark_failed(err, is_permanent=True)
-                return notification
-
-            # Handle provider outcome
-            if result.success:
-                ext_msg_id = result.external_message_id or ""
-                notification.mark_sent(external_message_id=ext_msg_id)
-
-                # Store outbound message in conversation history
-                try:
-                    conv, _ = Conversation.objects.get_or_create(
-                        customer=notification.customer,
-                        channel=notification.channel,
-                    )
-                    ConversationService.store_outbound_message(
-                        conversation=conv,
-                        text=notification.rendered_text,
-                        external_message_id=ext_msg_id,
-                        raw_payload=result.provider_response,
-                    )
-                except Exception as conv_exc:
-                    logger.warning("Failed to append message to conversation history: %s", str(conv_exc))
-
-                logger.info("Notification %s successfully sent (wamid/mid=%s)", notification.id, ext_msg_id)
-                return notification
-
-            # Failed dispatch handling
-            error_str = result.error_message or "Unknown provider send failure"
-            is_perm = cls._is_permanent_error(error_str)
-
-            notification.retry_count += 1
-            notification.mark_failed(error_message=error_str, is_permanent=is_perm)
-
-            logger.error(
-                "Notification %s dispatch failed (permanent=%s): %s",
-                notification.id,
-                is_perm,
-                error_str,
-            )
-
-        if is_perm:
-            raise PermanentNotificationError(error_str)
-        else:
-            raise TransientNotificationError(error_str)
-
+                notification.mark_failed(message.error_message or "Message acceptance unconfirmed.", is_permanent=True)
+        except APIException:
+            notification.mark_failed("Channel unavailable or messaging window closed. Check integration diagnostics.", is_permanent=True)
+        return notification
 
     # -------------------------------------------------------------------------
     # Status Synchronization from Webhooks
@@ -383,21 +283,25 @@ class NotificationService:
         delivery_status: str,
         error_details: Optional[Dict[str, Any]] = None,
         provider_timestamp: Optional[Any] = None,
+        organization=None,
+        channel=None,
     ) -> Optional[Notification]:
         """
         Synchronizes delivery status on Notification records matching the external message ID.
         """
-        if not external_message_id:
+        if not external_message_id or organization is None or channel is None:
             return None
 
         status_lower = delivery_status.lower()
         now = provider_timestamp or timezone.now()
 
-        notifications = Notification.objects.filter(external_message_id=external_message_id)
+        notifications = Notification.objects.filter(external_message_id=external_message_id, customer__organization=organization, channel=channel)
         if not notifications.exists():
             return None
 
         for notif in notifications:
+            if notif.status == "READ" or (notif.status == "DELIVERED" and status_lower == "failed"):
+                continue
             if status_lower == "delivered":
                 notif.mark_delivered(delivered_at=now)
             elif status_lower == "read":

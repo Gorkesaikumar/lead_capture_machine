@@ -44,6 +44,7 @@ THIRD_PARTY_APPS = [
 
 LOCAL_APPS = [
     "apps.core.apps.CoreConfig",
+    "apps.automations.apps.AutomationsConfig",
     "apps.accounts.apps.AccountsConfig",
     "apps.customers.apps.CustomersConfig",
     "apps.leads.apps.LeadsConfig",
@@ -55,6 +56,8 @@ LOCAL_APPS = [
     "apps.notifications.apps.NotificationsConfig",
     "apps.analytics.apps.AnalyticsConfig",
     "apps.audit.apps.AuditConfig",
+    "apps.organizations.apps.OrganizationsConfig",
+    "apps.subscriptions.apps.SubscriptionsConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -70,6 +73,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.core.middleware.StructuredLoggingMiddleware",
+    "apps.core.middleware.TenantMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -182,6 +186,7 @@ REST_FRAMEWORK = {
         "anon": "100/hour",
         "user": "1000/hour",
         "auth_login": "5/minute",
+        "billing": "20/minute",
     },
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.StandardResultsSetPagination",
     "PAGE_SIZE": 20,
@@ -237,6 +242,8 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_ALLOWED_ORIGIN_REGEXES = []
+from corsheaders.defaults import default_headers
+CORS_ALLOW_HEADERS = (*default_headers, "x-organization-id", "ngrok-skip-browser-warning")
 
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
@@ -249,6 +256,10 @@ STUDIO_NAME = os.getenv("STUDIO_NAME", "Studio V4 Photography")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").rstrip("/")
 
 # Meta Platform Credentials (Masked from direct logs)
+META_APP_ID = os.getenv("META_APP_ID", "")
+META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v25.0")
+META_HTTP_TIMEOUT_SECONDS = 10
+
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "")
 INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
@@ -317,6 +328,11 @@ LOGGING = {
             "level": os.getenv("INTEGRATIONS_LOG_LEVEL", "DEBUG" if DEBUG else "INFO"),
             "propagate": False,
         },
+        "django.server": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
         # Celery task logs
         "celery": {
             "handlers": ["console"],
@@ -331,3 +347,35 @@ LOGGING = {
     },
 }
 
+
+CELERY_BEAT_SCHEDULE = {
+    "outbound-recovery": {"task": "apps.conversations.drain_outbox", "schedule": 60.0},
+    "webhook-recovery": {"task": "apps.integrations.recover_webhooks", "schedule": 60.0},
+}
+
+META_WHATSAPP_REDIRECT_URI = os.getenv("META_WHATSAPP_REDIRECT_URI", "")
+META_REDIRECT_BASE_URL = os.getenv("META_REDIRECT_BASE_URL", "").rstrip("/")
+META_INSTAGRAM_REDIRECT_URI = os.getenv("META_INSTAGRAM_REDIRECT_URI", "")
+META_INSTAGRAM_APP_ID = os.getenv("META_INSTAGRAM_APP_ID", "")
+META_INSTAGRAM_APP_SECRET = os.getenv("META_INSTAGRAM_APP_SECRET", "")
+META_WHATSAPP_CONFIG_ID = os.getenv("META_WHATSAPP_CONFIG_ID", "")
+CELERY_BEAT_SCHEDULE["meta-connection-health"] = {"task": "apps.integrations.check_connections", "schedule": 21600.0}
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_TIMEOUT = 10
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@localhost")
+
+CELERY_BEAT_SCHEDULE["recover-data-deletions"] = {"task": "apps.integrations.deletion.recover_deletion_requests", "schedule": 60.0}
+
+# Never expose these server secrets to Vite. Configure captured payments in Razorpay.
+RAZORPAY_KEY_ID = (os.getenv("RAZORPAY_API_KEY") or os.getenv("RAZORPAY_KEY_ID", "")).strip()
+RAZORPAY_KEY_SECRET = (os.getenv("RAZORPAY_SECRET_KEY") or os.getenv("RAZORPAY_KEY_SECRET", "")).strip()
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
+RAZORPAY_SUBSCRIPTION_CYCLES = int(os.getenv("RAZORPAY_SUBSCRIPTION_CYCLES", "120"))
+CELERY_BEAT_SCHEDULE["reconcile-recurring-payments"] = {
+    "task": "apps.subscriptions.tasks.reconcile_recurring_payments", "schedule": 300.0,
+}

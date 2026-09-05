@@ -29,7 +29,8 @@ def dispatch_notification_task(self, notification_id: str):
     try:
         notification = NotificationService.dispatch_now(notification_id)
         return {
-            "success": True,
+            "success": notification.status in ("SENT", "DELIVERED", "READ"),
+            "permanent_error": notification.is_permanent_error,
             "notification_id": str(notification.id),
             "status": notification.status,
             "external_message_id": notification.external_message_id,

@@ -47,14 +47,31 @@ class UserResponseSerializer(serializers.ModelSerializer):
     Excludes password, password hashes, and internal framework flags.
     """
 
+    workspaces = serializers.SerializerMethodField()
+
+    def get_workspaces(self, user):
+        memberships = user.memberships.filter(
+            is_active=True,
+            organization__is_active=True,
+            organization__is_deleted=False,
+        ).select_related("organization").order_by("created_at", "id")
+        return [
+            {"id": str(m.organization_id), "name": m.organization.name, "role": m.role}
+            for m in memberships
+        ]
+
     class Meta:
         model = User
         fields = (
             "id",
             "email",
             "full_name",
+            "is_active",
+            "is_staff",
+            "is_superuser",
             "last_login",
             "created_at",
+            "workspaces",
         )
         read_only_fields = fields
 

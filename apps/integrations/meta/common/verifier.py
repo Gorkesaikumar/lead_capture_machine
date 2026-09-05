@@ -133,6 +133,8 @@ class MetaSignatureVerifier:
             logger.error("META_APP_SECRET is not configured for signed_request verification.")
             return None
 
+        if not isinstance(signed_request, str):
+            return None
         try:
             encoded_sig, encoded_payload = signed_request.split('.', 1)
         except ValueError:
@@ -149,6 +151,9 @@ class MetaSignatureVerifier:
             payload = json.loads(decode_base64_url(encoded_payload).decode('utf-8'))
         except Exception as e:
             logger.warning(f"Error decoding signed_request: {e}")
+            return None
+
+        if not isinstance(payload, dict) or payload.get("algorithm", "").upper() != "HMAC-SHA256" or not payload.get("user_id"):
             return None
 
         expected_sig = hmac.new(

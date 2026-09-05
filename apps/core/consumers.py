@@ -7,6 +7,43 @@ import json
 import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.utils import timezone
+from channels.db import database_sync_to_async
+from urllib.parse import parse_qs
+
+
+@database_sync_to_async
+def resolve_workspace(scope):
+    from apps.organizations.models import OrganizationMembership
+    from apps.conversations.models import Conversation
+    from apps.leads.models import Lead
+    from uuid import UUID
+    user = scope.get("user")
+    if not user or not user.is_authenticated or not user.is_active:
+        return None
+    from rest_framework.authtoken.models import Token
+    if not Token.objects.filter(key=scope.get("auth_token_key"), user=user, user__is_active=True).exists():
+        return None
+    memberships = OrganizationMembership.objects.filter(user=user, user__is_active=True, is_active=True, organization__is_active=True, organization__is_deleted=False)
+    org_id = parse_qs(scope.get("query_string", b"").decode()).get("organization_id", [None])[0]
+    if org_id:
+        try:
+            memberships = memberships.filter(organization_id=UUID(org_id))
+        except ValueError:
+            return None
+    membership = memberships.first()
+    if not membership:
+        return None
+    kwargs = scope.get("url_route", {}).get("kwargs", {})
+    for key, model in (("conversation_id", Conversation), ("lead_id", Lead)):
+        if key in kwargs:
+            try:
+                entity_id = UUID(kwargs[key])
+            except (ValueError, TypeError):
+                return None
+            if not model.objects.filter(pk=entity_id, organization=membership.organization, is_deleted=False).exists():
+                return None
+    return str(membership.organization_id)
+
 
 logger = logging.getLogger("apps.core.consumers")
 
@@ -18,7 +55,8 @@ class BaseAdminConsumer(AsyncJsonWebsocketConsumer):
 
     async def connect(self):
         user = self.scope.get("user")
-        if not user or not user.is_authenticated or not (user.is_staff or user.is_superuser):
+        self.organization_id = await resolve_workspace(self.scope)
+        if not self.organization_id:
             logger.warning(
                 "WebSocket connection REJECTED (Unauthorized): user=%s path=%s client=%s",
                 user,
@@ -34,7 +72,7 @@ class BaseAdminConsumer(AsyncJsonWebsocketConsumer):
         for group in self.groups_joined:
             await self.channel_layer.group_add(group, self.channel_name)
 
-        await self.accept()
+        await self.accept(subprotocol="v4" if "v4" in self.scope.get("subprotocols", []) else None)
         logger.info(
             "WebSocket CONNECTED: user=%s channel=%s groups=%s client=%s",
             user.email if hasattr(user, "email") else user,
@@ -78,6 +116,9 @@ class BaseAdminConsumer(AsyncJsonWebsocketConsumer):
         Handler for channel layer group messages.
         Dispatches typed events to the connected client.
         """
+        if await resolve_workspace(self.scope) != self.organization_id:
+            await self.close(code=4403)
+            return
         await self.send_json({
             "type": event.get("event_type", "UNKNOWN_EVENT"),
             "payload": event.get("payload", {}),
@@ -96,7 +137,7 @@ class AdminDashboardConsumer(BaseAdminConsumer):
     """
 
     async def setup_groups(self):
-        self.groups_joined.append("admin_dashboard")
+        self.groups_joined.append(f"organization_{self.organization_id}")
 
 
 class ConversationConsumer(BaseAdminConsumer):
@@ -110,7 +151,7 @@ class ConversationConsumer(BaseAdminConsumer):
         if conversation_id:
             self.groups_joined.append(f"conversation_{conversation_id}")
         # Also join global dashboard so unified stream receives updates
-        self.groups_joined.append("admin_dashboard")
+        self.groups_joined.append(f"organization_{self.organization_id}")
 
 
 class LeadConsumer(BaseAdminConsumer):
@@ -123,4 +164,4 @@ class LeadConsumer(BaseAdminConsumer):
         lead_id = self.scope.get("url_route", {}).get("kwargs", {}).get("lead_id")
         if lead_id:
             self.groups_joined.append(f"lead_{lead_id}")
-        self.groups_joined.append("admin_dashboard")
+        self.groups_joined.append(f"organization_{self.organization_id}")

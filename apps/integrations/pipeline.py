@@ -44,48 +44,6 @@ class InboundPipelineService:
         Generates a deterministic unique identifier for the webhook payload.
         Prioritizes message ID or status ID; falls back to SHA-256 hash of payload.
         """
-        try:
-            entries = payload.get("entry", [])
-            if entries and isinstance(entries, list):
-                first_entry = entries[0]
-                # Instagram single message
-                if channel == "INSTAGRAM":
-                    messaging = first_entry.get("messaging", [])
-                    if messaging and isinstance(messaging, list):
-                        first_msg = messaging[0].get("message", {})
-                        mid = first_msg.get("mid")
-                        if mid:
-                            return f"ig_mid_{mid}"
-
-                    changes = first_entry.get("changes", [])
-                    if changes and isinstance(changes, list):
-                        val = changes[0].get("value", {})
-                        if isinstance(val, dict):
-                            msg_obj = val.get("message", {})
-                            mid = msg_obj.get("mid")
-                            if mid:
-                                return f"ig_changes_mid_{mid}"
-
-                # WhatsApp message or status
-                elif channel == "WHATSAPP":
-                    changes = first_entry.get("changes", [])
-                    if changes and isinstance(changes, list):
-                        val = changes[0].get("value", {})
-                        messages = val.get("messages", [])
-                        if messages and len(messages) == 1:
-                            wamid = messages[0].get("id")
-                            if wamid:
-                                return f"wa_mid_{wamid}"
-                        statuses = val.get("statuses", [])
-                        if statuses and len(statuses) == 1:
-                            st = statuses[0]
-                            st_id = st.get("id")
-                            st_name = st.get("status")
-                            if st_id and st_name:
-                                return f"wa_status_{st_id}_{st_name}"
-        except Exception as e:
-            logger.warning("generate_event_id parsing error: %s", e)
-
         # Fallback to deterministic SHA-256 of normalized JSON payload
         serialized = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         hash_id = hashlib.sha256(serialized).hexdigest()
@@ -167,148 +125,83 @@ class InboundPipelineService:
                     },
                 )
 
-            if existing_event and existing_event.status == RawWebhookEvent.Status.PENDING:
-                existing_event.status = RawWebhookEvent.Status.DUPLICATE
-                existing_event.save(update_fields=["status", "updated_at"])
-
             return existing_event, False
 
     @classmethod
-    def process_raw_webhook_event(
-        cls,
-        raw_event: RawWebhookEvent,
-        plog: Optional[PipelineLogger] = None,
-    ) -> Dict[str, Any]:
-        """
-        Processes an existing RawWebhookEvent record through parser, conversation, status update,
-        and lead services.
-        """
-        # Create or reuse a PipelineLogger scoped to this event
-        if plog is None:
-            plog = PipelineLogger(
-                base_logger=logger,
-                event_id=raw_event.event_id,
-                channel=raw_event.channel,
-            )
-        else:
-            plog.set(event_id=raw_event.event_id, channel=raw_event.channel)
-
+    @transaction.atomic
+    def process_raw_webhook_event(cls, raw_event, plog=None):
+        from apps.integrations.models import IntegrationConfig
+        from apps.leads.capture import capture_message_lead
+        from apps.automations.services import evaluate_message
+        raw_event = RawWebhookEvent.objects.select_for_update().get(pk=raw_event.pk)
+        if raw_event.status == RawWebhookEvent.Status.PROCESSED:
+            return {"success": True, "messages_processed": 0, "is_duplicate": True}
         payload = raw_event.payload
-        plog.debug(PipelineStage.PAYLOAD_PARSED, "Selecting parser for payload object type",
-                   object_type=payload.get("object"))
-
         parser = cls._find_parser_for_payload(payload)
+        counts = {"success": True, "messages_processed": 0, "statuses_processed": 0, "new_messages_created": 0, "leads_created": 0}
         if not parser:
-            plog.warning(
-                PipelineStage.PAYLOAD_PARSED,
-                "No parser found for payload — unsupported object type",
-                object_type=payload.get("object"),
-            )
-            return {
-                "success": True,
-                "messages_processed": 0,
-                "statuses_processed": 0,
-                "notes": "Unsupported object type",
-            }
+            return {**counts, "notes": "Unsupported object type"}
 
-        plog.debug(PipelineStage.PAYLOAD_PARSED, "Parser selected",
-                   parser=type(parser).__name__)
+        def resolve(channel, destination):
+            configs = list(IntegrationConfig.objects.select_for_update(of=("self",)).filter(provider=channel, metadata__destination_id=destination, is_active=True, organization__is_active=True, organization__is_deleted=False).select_related("organization")[:2])
+            if len(configs) != 1:
+                raise ValueError("Webhook destination is unconfigured or assigned to multiple workspaces.")
+            config = configs[0]
+            config.metadata = {**config.metadata, "last_event_time": raw_event.created_at.isoformat()}
+            config.save(update_fields=["metadata", "updated_at"])
+            return config.organization
 
-        # 1. Process WhatsApp Status Updates (if present)
-        statuses_processed_count = 0
-        if isinstance(parser, WhatsAppInboundParser):
-            status_updates = parser.parse_status_updates(payload)
-            for st in status_updates:
-                updated_msg = ConversationService.update_message_delivery_status(
-                    external_message_id=st.external_message_id,
-                    delivery_status=st.status,
-                    error_details=st.error_details,
-                    provider_timestamp=st.timestamp,
-                )
-                if updated_msg:
-                    statuses_processed_count += 1
-                    plog.info(
-                        PipelineStage.MESSAGE_SAVED,
-                        "WhatsApp delivery status updated",
-                        external_message_id=st.external_message_id,
-                        delivery_status=st.status,
-                    )
-                    broadcast_message_updated(updated_msg)
+        # Status callbacks are routed by the receiving phone/account, never globally.
+        for entry in payload.get("entry", []):
+            if isinstance(parser, WhatsAppInboundParser):
+                for change in entry.get("changes", []):
+                    value = change.get("value", {})
+                    if not value.get("statuses"):
+                        continue
+                    org = resolve("WHATSAPP", str(value.get("metadata", {}).get("phone_number_id", "")))
+                    for st in parser.parse_status_updates({"object": payload["object"], "entry": [{"changes": [change]}]}):
+                        msg = ConversationService.update_message_delivery_status(st.external_message_id, st.status, st.error_details, st.timestamp, organization=org, channel="WHATSAPP")
+                        if msg:
+                            counts["statuses_processed"] += 1
+                            transaction.on_commit(lambda m=msg: broadcast_message_updated(m))
+            else:
+                for event in entry.get("messaging", []):
+                    read_id = event.get("read", {}).get("mid")
+                    delivery_ids = event.get("delivery", {}).get("mids", [])
+                    if not read_id and not delivery_ids:
+                        continue
+                    org = resolve("INSTAGRAM", str(entry.get("id", "")))
+                    for mid in ([read_id] if read_id else delivery_ids):
+                        msg = ConversationService.update_message_delivery_status(mid, "read" if read_id else "delivered", organization=org, channel="INSTAGRAM")
+                        if msg:
+                            counts["statuses_processed"] += 1
+                            transaction.on_commit(lambda m=msg: broadcast_message_updated(m))
 
-        # 2. Process Inbound Messages
-        normalized_messages = parser.parse_messages(payload)
-        processed_count = 0
-        created_messages_count = 0
-        leads_created_count = 0
-
-        for norm_msg in normalized_messages:
-            plog.debug(
-                PipelineStage.PAYLOAD_PARSED,
-                "Processing normalized inbound message",
-                external_message_id=norm_msg.external_message_id,
-                channel=norm_msg.channel,
-                message_type=getattr(norm_msg, "message_type", None),
-            )
-
-            msg_instance, was_created = ConversationService.store_inbound_message(
-                norm_msg.to_service_dict(),
-                plog=plog,
-            )
-            processed_count += 1
-
-            if was_created:
-                created_messages_count += 1
-
-                # Trigger Lead Detection on newly created message
-                plog.info(
-                    PipelineStage.LEAD_DETECTION,
-                    "Running lead detection",
-                    message_id=str(msg_instance.id),
-                    external_message_id=str(msg_instance.external_message_id or ""),
-                )
-                lead, lead_created, matched_trigger = LeadDetectionService.process_inbound_message(
-                    msg_instance,
-                    plog=plog,
-                )
-
-                if lead and lead_created:
-                    leads_created_count += 1
-                    plog.info(
-                        PipelineStage.LEAD_CREATED,
-                        "New lead created",
-                        lead_id=str(lead.id),
-                        customer_id=str(lead.customer_id),
-                        trigger_id=str(matched_trigger.id) if matched_trigger else None,
-                    )
-                    broadcast_new_lead(lead)
-                elif lead:
-                    broadcast_lead_updated(lead)
-
-                # Broadcast new message to dashboard
-                plog.info(
-                    PipelineStage.WEBSOCKET_BROADCAST,
-                    "Broadcasting new message event",
-                    message_id=str(msg_instance.id),
-                    lead_id=str(lead.id) if lead else None,
-                    conversation_id=str(msg_instance.conversation_id),
-                )
-                broadcast_new_message(msg_instance, lead_id=str(lead.id) if lead else None)
-
-        plog.info(
-            PipelineStage.RAW_EVENT_SAVED,
-            "Webhook event processing complete",
-            new_messages=created_messages_count,
-            total_processed=processed_count,
-            statuses_processed=statuses_processed_count,
-            leads_created=leads_created_count,
-        )
-        return {
-            "success": True,
-            "messages_processed": processed_count,
-            "statuses_processed": statuses_processed_count,
-            "new_messages_created": created_messages_count,
-            "leads_created": leads_created_count,
-        }
+        for normalized in parser.parse_messages(payload):
+            org = resolve(normalized.channel, normalized.destination_id)
+            message, created = ConversationService.store_inbound_message(normalized.to_service_dict(), organization=org, plog=plog)
+            counts["messages_processed"] += 1
+            if not created:
+                continue
+            counts["new_messages_created"] += 1
+            # Lock the customer before the legacy trigger detector and default capture.
+            from apps.customers.models import Customer
+            Customer.objects.select_for_update().get(pk=message.conversation.customer_id)
+            lead, lead_created, trigger = LeadDetectionService.process_inbound_message(message, plog=plog)
+            if not lead:
+                lead, lead_created = capture_message_lead(message)
+            if lead_created:
+                counts["leads_created"] += 1
+                transaction.on_commit(lambda l=lead: broadcast_new_lead(l))
+            evaluate_message(message, new_lead=lead_created)
+            transaction.on_commit(lambda m=message, l=lead: broadcast_new_message(m, lead_id=str(l.pk) if l else None))
+        raw_event.status = RawWebhookEvent.Status.PROCESSED
+        from django.utils import timezone
+        raw_event.processed_at = timezone.now()
+        raw_event.error_message = ""
+        raw_event.messages_count = counts["messages_processed"] + counts["statuses_processed"]
+        raw_event.save(update_fields=["status", "processed_at", "error_message", "messages_count", "updated_at"])
+        return counts
 
     @classmethod
     def process_webhook_payload(

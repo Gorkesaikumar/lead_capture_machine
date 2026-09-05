@@ -18,6 +18,7 @@ class NormalizedInboundMessage:
     channel: str  # "INSTAGRAM" or "WHATSAPP"
     external_message_id: str
     external_user_id: str
+    destination_id: Optional[str] = None
     sender_name: Optional[str] = None
     sender_username: Optional[str] = None
     sender_phone: Optional[str] = None
@@ -35,6 +36,7 @@ class NormalizedInboundMessage:
             "channel": self.channel,
             "external_user_id": self.external_user_id,
             "external_message_id": self.external_message_id,
+            "destination_id": self.destination_id,
             "display_name": self.sender_name,
             "username": self.sender_username,
             "phone_number": self.sender_phone,

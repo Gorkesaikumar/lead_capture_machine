@@ -46,8 +46,8 @@ services:
       dockerfile: Dockerfile
     container_name: v4_studio_web_prod
     restart: unless-stopped
-    # Use Daphne to support ASGI/WebSockets natively
-    command: daphne -b 0.0.0.0 -p 8000 --ping-interval 20 --ping-timeout 60 config.asgi:application
+    # Use Gunicorn with Uvicorn workers for production reliability and throughput
+    command: gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers 4 --timeout 60
     volumes:
       - static_volume:/app/staticfiles
       - media_volume:/app/media
@@ -56,7 +56,7 @@ services:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready/', timeout=5)"
+        - "import os, urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8000/health/ready/', headers={'Host': os.environ['ALLOWED_HOSTS'].split(',')[0]}), timeout=5)"
       interval: 30s
       timeout: 10s
       retries: 3
@@ -64,6 +64,7 @@ services:
     env_file:
       - .env.production
     environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
       - POSTGRES_HOST=db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
@@ -89,6 +90,7 @@ services:
     env_file:
       - .env.production
     environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
       - POSTGRES_HOST=db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1
@@ -111,6 +113,7 @@ services:
     env_file:
       - .env.production
     environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
       - POSTGRES_HOST=db
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/1

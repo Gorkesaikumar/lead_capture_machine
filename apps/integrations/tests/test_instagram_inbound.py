@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive automated tests for Instagram Inbound Webhook Integration.
 Covers verification, HMAC signatures, message normalization, idempotency,
@@ -37,15 +38,27 @@ class InstagramWebhookIntegrationTests(TestCase):
         self.app_secret = getattr(settings, "META_APP_SECRET", "mock_meta_app_secret_32chars_long")
         self.webhook_url = "/api/v1/webhooks/meta/instagram/"
 
+        # Setup test organization and integration config
+        from apps.organizations.models import Organization
+        from apps.integrations.models import IntegrationConfig
+
+        self.org = make_organization(name="Test Org", slug="test-org")
+        self.config = IntegrationConfig.objects.create(
+            organization=self.org,
+            provider="INSTAGRAM",
+            is_active=True,
+            metadata={"destination_id": "ig_page_999"}
+        )
+
         # Setup test photography service and trigger
-        self.service = PhotographyService.objects.create(
+        self.service = PhotographyService.objects.create(organization=self.org,
             name="Baby Shoot",
             slug="baby-shoot",
             base_price=15000.00,
             duration_minutes=60,
             is_active=True,
         )
-        self.trigger = LeadTrigger.objects.create(
+        self.trigger = LeadTrigger.objects.create(organization=self.org,
             phrase="baby shoot",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=self.service,
@@ -190,7 +203,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             "message_type": "TEXT",
             "text": "Hello, interested in baby shoot",
         }
-        msg1, created1 = ConversationService.store_inbound_message(msg1_dict)
+        msg1, created1 = ConversationService.store_inbound_message(msg1_dict, organization=self.org)
         self.assertTrue(created1)
         lead1, lead_created1, _ = LeadDetectionService.process_inbound_message(msg1)
         self.assertTrue(lead_created1)
@@ -203,7 +216,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             "message_type": "TEXT",
             "text": "When is the next available slot for the baby shoot?",
         }
-        msg2, created2 = ConversationService.store_inbound_message(msg2_dict)
+        msg2, created2 = ConversationService.store_inbound_message(msg2_dict, organization=self.org)
         self.assertTrue(created2)
         lead2, lead_created2, _ = LeadDetectionService.process_inbound_message(msg2)
 
@@ -268,7 +281,7 @@ class InstagramWebhookIntegrationTests(TestCase):
         self.assertEqual(res2.status_code, 200)
 
         # Only one RawWebhookEvent in DB
-        events = RawWebhookEvent.objects.filter(channel="INSTAGRAM", event_id__contains="mid_1003_dup")
+        events = RawWebhookEvent.objects.filter(channel="INSTAGRAM", payload__entry__0__messaging__0__message__mid="mid_1003_dup")
         self.assertEqual(events.count(), 1)
 
     # --------------------------------------------------------------------------
@@ -283,12 +296,12 @@ class InstagramWebhookIntegrationTests(TestCase):
             "message_type": "TEXT",
             "text": "Hello there",
         }
-        msg1, created1 = ConversationService.store_inbound_message(msg_dict)
+        msg1, created1 = ConversationService.store_inbound_message(msg_dict, organization=self.org)
         self.assertTrue(created1)
         self.assertEqual(msg1.conversation.unread_count, 1)
 
         # Resend same message dict
-        msg2, created2 = ConversationService.store_inbound_message(msg_dict)
+        msg2, created2 = ConversationService.store_inbound_message(msg_dict, organization=self.org)
         self.assertFalse(created2)
         self.assertEqual(msg1.id, msg2.id)
 
@@ -303,8 +316,8 @@ class InstagramWebhookIntegrationTests(TestCase):
         customer, _ = CustomerResolutionService.resolve_customer(
             channel="INSTAGRAM",
             external_user_id="ig_user_1005",
-        )
-        conv, _ = Conversation.objects.get_or_create(customer=customer, channel="INSTAGRAM")
+         organization=self.org)
+        conv, _ = Conversation.objects.get_or_create(organization=self.org, customer=customer, channel="INSTAGRAM")
 
         msg = Message.objects.create(
             conversation=conv,
@@ -328,8 +341,8 @@ class InstagramWebhookIntegrationTests(TestCase):
         customer, _ = CustomerResolutionService.resolve_customer(
             channel="INSTAGRAM",
             external_user_id="ig_user_1006",
-        )
-        conv, _ = Conversation.objects.get_or_create(customer=customer, channel="INSTAGRAM")
+         organization=self.org)
+        conv, _ = Conversation.objects.get_or_create(organization=self.org, customer=customer, channel="INSTAGRAM")
         msg = Message.objects.create(
             conversation=conv,
             direction=Message.Direction.INBOUND,
@@ -350,7 +363,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             channel="INSTAGRAM",
             external_user_id="ig_user_1007",
             username="insta_fan_1",
-        )
+         organization=self.org)
         self.assertTrue(created1)
         self.assertEqual(customer1.display_name, "insta_fan_1")
 
@@ -360,7 +373,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             external_user_id="ig_user_1007",
             display_name="Praveen Kumar",
             username="praveen_k",
-        )
+         organization=self.org)
         self.assertFalse(created2)
         self.assertEqual(customer1.id, customer2.id)
         customer1.refresh_from_db()
@@ -374,7 +387,7 @@ class InstagramWebhookIntegrationTests(TestCase):
         customer, _ = CustomerResolutionService.resolve_customer(
             channel="INSTAGRAM",
             external_user_id="ig_user_1008",
-        )
+         organization=self.org)
         msg1_dict = {
             "channel": "INSTAGRAM",
             "external_user_id": "ig_user_1008",
@@ -382,7 +395,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             "message_type": "TEXT",
             "text": "Hello",
         }
-        msg1, _ = ConversationService.store_inbound_message(msg1_dict)
+        msg1, _ = ConversationService.store_inbound_message(msg1_dict, organization=self.org)
 
         msg2_dict = {
             "channel": "INSTAGRAM",
@@ -391,7 +404,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             "message_type": "TEXT",
             "text": "Are you open on Sundays?",
         }
-        msg2, _ = ConversationService.store_inbound_message(msg2_dict)
+        msg2, _ = ConversationService.store_inbound_message(msg2_dict, organization=self.org)
 
         self.assertEqual(msg1.conversation.id, msg2.conversation.id)
         self.assertEqual(Conversation.objects.filter(customer=customer).count(), 1)
@@ -427,8 +440,8 @@ class InstagramWebhookIntegrationTests(TestCase):
         customer, _ = CustomerResolutionService.resolve_customer(
             channel="INSTAGRAM",
             external_user_id=ig_user_id,
-        )
-        conv = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+         organization=self.org)
+        conv = Conversation.objects.create(organization=self.org, customer=customer, channel="INSTAGRAM")
 
         # Inbound message 2 hours ago -> window is OPEN
         two_hours_ago = timezone.now() - timedelta(hours=2)
@@ -440,7 +453,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             provider_timestamp=two_hours_ago,
             created_at=two_hours_ago,
         )
-        self.assertTrue(ConversationService.is_within_24h_window("INSTAGRAM", ig_user_id))
+        self.assertTrue(ConversationService.is_within_24h_window("INSTAGRAM", ig_user_id, organization=self.org))
 
         # Inbound message 25 hours ago -> window is CLOSED
         twenty_five_hours_ago = timezone.now() - timedelta(hours=25)
@@ -453,7 +466,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             provider_timestamp=twenty_five_hours_ago,
             created_at=twenty_five_hours_ago,
         )
-        self.assertFalse(ConversationService.is_within_24h_window("INSTAGRAM", ig_user_id))
+        self.assertFalse(ConversationService.is_within_24h_window("INSTAGRAM", ig_user_id, organization=self.org))
 
     # --------------------------------------------------------------------------
     # Scenario 15: Malformed webhook payload handling (returns 400 without crashing)
@@ -532,14 +545,14 @@ class InstagramLeadConcurrencyTests(TransactionTestCase):
 
     def test_14_concurrent_lead_creation(self):
         """Simultaneous inbound messages from the same user create exactly one active lead."""
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Baby Shoot",
             slug="baby-shoot",
             base_price=15000.00,
             duration_minutes=60,
             is_active=True,
         )
-        LeadTrigger.objects.create(
+        LeadTrigger.objects.create(organization=test_workspace(),
             phrase="baby shoot",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=service,
@@ -547,8 +560,8 @@ class InstagramLeadConcurrencyTests(TransactionTestCase):
             is_active=True,
         )
 
-        customer = Customer.objects.create(display_name="Concurrent Customer")
-        conv = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Concurrent Customer")
+        conv = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
 
         msg1 = Message.objects.create(
             conversation=conv,

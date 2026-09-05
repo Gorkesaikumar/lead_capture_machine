@@ -211,171 +211,65 @@ def process_whatsapp_webhook_event_task(self, raw_event_id: str):
 
 
 
-@shared_task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=5,
-    name="apps.integrations.send_whatsapp_message_task",
-)
-def send_whatsapp_message_task(self, recipient_phone: str, text: str, local_message_id: str):
-    """
-    Asynchronously sends a standard text message via WhatsApp Cloud API.
-    """
+def _legacy_dispatch(local_message_id):
     from apps.conversations.models import Message
-    with transaction.atomic():
-        msg = Message.objects.select_for_update(of=("self",)).filter(external_message_id=local_message_id).first()
-        if not msg:
-            logger.error("Message %s not found for dispatch", local_message_id)
-            raise self.retry(exc=Exception("Message not found"), countdown=5 * (2 ** self.request.retries))
-            
-        if msg.external_message_id != local_message_id:
-            logger.info("Message %s already sent (id=%s). Skipping.", local_message_id, msg.external_message_id)
-            return {"success": True, "external_message_id": msg.external_message_id}
-
-        provider = WhatsAppMessagingProvider()
-        res = provider.send_text_message(recipient_id=recipient_phone, text=text)
-        if not res.success:
-            logger.warning("WhatsApp send_text_message failed for %s: %s", recipient_phone, res.error_message)
-            raise self.retry(exc=Exception(res.error_message), countdown=5 * (2 ** self.request.retries))
-            
-        ConversationService.update_message_delivery_status(
-            external_message_id=local_message_id,
-            delivery_status="SENT"
-        )
-        msg.external_message_id = res.external_message_id
-        msg.save(update_fields=["external_message_id", "updated_at"])
-        
-    return {"success": True, "external_message_id": res.external_message_id}
+    from apps.conversations.outbound import dispatch_message
+    message = Message.objects.filter(external_message_id=local_message_id).first()
+    if not message:
+        return {"success": False, "error": "Legacy message not found. Use the conversation send endpoint."}
+    result = dispatch_message(str(message.pk))
+    return {"success": result.delivery_status == "SENT", "external_message_id": result.external_message_id, "status": result.delivery_status}
 
 
-@shared_task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=5,
-    name="apps.integrations.send_whatsapp_booking_link_task",
-)
-def send_whatsapp_booking_link_task(
-    self,
-    recipient_phone: str,
-    booking_url: str,
-    customer_name: Optional[str] = None,
-    service_name: Optional[str] = None,
-    force_template: bool = False,
-):
-    """
-    Asynchronously sends a booking link via WhatsApp Cloud API.
-    Automatically selects free-form message or approved Template depending on the 24h customer service window.
-    """
-    provider = WhatsAppMessagingProvider()
-    res = provider.send_booking_link_message(
-        recipient_id=recipient_phone,
-        booking_url=booking_url,
-        customer_name=customer_name,
-        service_name=service_name,
-        force_template=force_template,
-    )
-    if not res.success:
-        logger.warning("WhatsApp send_booking_link failed for %s: %s", recipient_phone, res.error_message)
-        raise self.retry(exc=Exception(res.error_message))
-    return {"success": True, "external_message_id": res.external_message_id}
+@shared_task
+def send_instagram_message_task(recipient_id, text, local_message_id):
+    return _legacy_dispatch(local_message_id)
 
 
-@shared_task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=5,
-    name="apps.integrations.send_instagram_message_task",
-)
-def send_instagram_message_task(self, recipient_id: str, text: str, local_message_id: str):
-    """
-    Asynchronously sends a standard text message via Instagram Graph API.
-    """
-    from apps.conversations.models import Message
-    with transaction.atomic():
-        msg = Message.objects.select_for_update(of=("self",)).filter(external_message_id=local_message_id).first()
-        if not msg:
-            logger.error("Message %s not found for dispatch", local_message_id)
-            raise self.retry(exc=Exception("Message not found"), countdown=5 * (2 ** self.request.retries))
-            
-        if msg.external_message_id != local_message_id:
-            logger.info("Message %s already sent (id=%s). Skipping.", local_message_id, msg.external_message_id)
-            return {"success": True, "external_message_id": msg.external_message_id}
-
-        provider = InstagramMessagingProvider()
-        res = provider.send_text_message(recipient_id=recipient_id, text=text)
-        
-        if res.success and res.external_message_id:
-            ConversationService.update_message_delivery_status(
-                external_message_id=local_message_id,
-                delivery_status="SENT"
-            )
-            msg.external_message_id = res.external_message_id
-            msg.save(update_fields=["external_message_id", "updated_at"])
-            return {"success": True, "external_message_id": res.external_message_id}
-        else:
-            error_msg = res.error_message or ""
-            is_retryable = "rate limit" in error_msg.lower() or "timeout" in error_msg.lower()
-            if is_retryable:
-                logger.warning("Instagram send_text_message rate limited/timeout for %s: %s. Retrying...", recipient_id, error_msg)
-                raise self.retry(exc=Exception(res.error_message), countdown=5 * (2 ** self.request.retries))
-            
-            logger.error("Instagram send_text_message permanent failure for %s: %s", recipient_id, error_msg)
-            ConversationService.update_message_delivery_status(
-                external_message_id=local_message_id,
-                delivery_status="FAILED",
-                error_details={"error": error_msg}
-            )
-            return {"success": False, "error_message": error_msg}
+@shared_task
+def send_whatsapp_message_task(recipient_phone, text, local_message_id):
+    return _legacy_dispatch(local_message_id)
 
 
-@shared_task(
-    bind=True,
-    max_retries=3,
-    default_retry_delay=5,
-    name="apps.integrations.send_instagram_media_message_task",
-)
-def send_instagram_media_message_task(self, recipient_id: str, media_url: str, media_type: str, caption: str, local_message_id: str):
-    """
-    Asynchronously sends a media message via Instagram Graph API.
-    """
-    from apps.conversations.models import Message
-    with transaction.atomic():
-        msg = Message.objects.select_for_update(of=("self",)).filter(external_message_id=local_message_id).first()
-        if not msg:
-            logger.error("Message %s not found for dispatch", local_message_id)
-            raise self.retry(exc=Exception("Message not found"), countdown=5 * (2 ** self.request.retries))
-            
-        if msg.external_message_id != local_message_id:
-            logger.info("Message %s already sent (id=%s). Skipping.", local_message_id, msg.external_message_id)
-            return {"success": True, "external_message_id": msg.external_message_id}
+@shared_task
+def send_instagram_media_message_task(recipient_id, media_url, media_type, caption, local_message_id):
+    return _legacy_dispatch(local_message_id)
 
-        provider = InstagramMessagingProvider()
-        res = provider.send_media_message(
-            recipient_id=recipient_id,
-            media_url=media_url,
-            media_type=media_type,
-            caption=caption,
-        )
-        
-        if res.success and res.external_message_id:
-            ConversationService.update_message_delivery_status(
-                external_message_id=local_message_id,
-                delivery_status="SENT"
-            )
-            msg.external_message_id = res.external_message_id
-            msg.save(update_fields=["external_message_id", "updated_at"])
-            return {"success": True, "external_message_id": res.external_message_id}
-        else:
-            error_msg = res.error_message or ""
-            is_retryable = "rate limit" in error_msg.lower() or "timeout" in error_msg.lower()
-            if is_retryable:
-                logger.warning("Instagram send_media_message rate limited/timeout for %s: %s. Retrying...", recipient_id, error_msg)
-                raise self.retry(exc=Exception(res.error_message), countdown=5 * (2 ** self.request.retries))
-                
-            logger.error("Instagram send_media_message permanent failure for %s: %s", recipient_id, error_msg)
-            ConversationService.update_message_delivery_status(
-                external_message_id=local_message_id,
-                delivery_status="FAILED",
-                error_details={"error": error_msg}
-            )
-            return {"success": False, "error_message": error_msg}
+
+@shared_task
+def send_whatsapp_booking_link_task(recipient_phone, booking_url, customer_name=None, service_name=None, force_template=False, conversation_id=None):
+    # A phone number alone is not a tenant boundary.
+    if not conversation_id:
+        return {"success": False, "error": "A workspace-scoped conversation_id is required."}
+    from apps.conversations.models import Conversation
+    from apps.conversations.outbound import queue_message
+    conversation = Conversation.objects.get(pk=conversation_id, channel="WHATSAPP")
+    msg = queue_message(conversation, {"text": booking_url})
+    return {"status": msg.delivery_status, "message_id": str(msg.pk)}
+
+
+@shared_task(name="apps.integrations.recover_webhooks")
+def recover_webhooks():
+    from datetime import timedelta
+    # Failed events remain inspectable; automatic recovery retries only recent failures.
+    events = RawWebhookEvent.objects.filter(status__in=["PENDING", "PROCESSING", "FAILED"], updated_at__lt=timezone.now()-timedelta(minutes=2), created_at__gt=timezone.now()-timedelta(days=1))[:100]
+    for event in events:
+        task = process_whatsapp_webhook_event_task if event.channel == "WHATSAPP" else process_instagram_webhook_event_task
+        task.delay(str(event.pk))
+
+from .deletion import delete_instagram_data, recover_deletion_requests  # noqa: F401
+
+
+@shared_task(name="apps.integrations.verify_connection")
+def verify_connection(config_id):
+    from .health_service import verify_integration
+    verify_integration(config_id)
+
+
+@shared_task(name="apps.integrations.check_connections")
+def check_connections():
+    from datetime import timedelta
+    from .models import IntegrationConfig, OAuthAttempt
+    for config_id in IntegrationConfig.objects.filter(is_active=True, organization__is_active=True, organization__is_deleted=False).values_list("pk", flat=True).iterator():
+        verify_connection.delay(str(config_id))
+    OAuthAttempt.objects.filter(expires_at__lt=timezone.now()-timedelta(days=1)).delete()

@@ -1,3 +1,5 @@
+from apps.core.mixins import TenantViewSetMixin
+from apps.organizations.permissions import IsOrganizationMember, IsOrganizationAdmin
 """
 Views for Scheduling, Availability, and Business Hours.
 """
@@ -70,8 +72,8 @@ class AvailabilityAPIView(APIView):
         return Response(range_data)
 
 
-class WeeklyAvailabilityViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+class WeeklyAvailabilityViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
     serializer_class = WeeklyAvailabilitySerializer
     queryset = WeeklyAvailability.objects.all().order_by("weekday", "start_time")
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -79,7 +81,7 @@ class WeeklyAvailabilityViewSet(viewsets.ModelViewSet):
     ordering_fields = ["weekday", "start_time"]
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="WeeklyAvailability",
             entity_id=instance.id,
@@ -89,7 +91,7 @@ class WeeklyAvailabilityViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="WeeklyAvailability",
             entity_id=instance.id,
@@ -109,8 +111,8 @@ class WeeklyAvailabilityViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
-class SpecialAvailabilityViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+class SpecialAvailabilityViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
     serializer_class = SpecialAvailabilitySerializer
     queryset = SpecialAvailability.objects.all().order_by("date", "start_time")
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -119,7 +121,7 @@ class SpecialAvailabilityViewSet(viewsets.ModelViewSet):
     ordering_fields = ["date", "start_time"]
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="SpecialAvailability",
             entity_id=instance.id,
@@ -129,7 +131,7 @@ class SpecialAvailabilityViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="SpecialAvailability",
             entity_id=instance.id,
@@ -149,8 +151,8 @@ class SpecialAvailabilityViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
-class BlockedPeriodViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+class BlockedPeriodViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
     serializer_class = BlockedPeriodSerializer
     queryset = BlockedPeriod.objects.all().select_related("service").order_by("starts_at")
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -159,7 +161,7 @@ class BlockedPeriodViewSet(viewsets.ModelViewSet):
     ordering_fields = ["starts_at", "ends_at"]
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="BlockedPeriod",
             entity_id=instance.id,
@@ -169,7 +171,7 @@ class BlockedPeriodViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="BlockedPeriod",
             entity_id=instance.id,
@@ -189,8 +191,8 @@ class BlockedPeriodViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
-class HolidayClosureViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated]
+class HolidayClosureViewSet(TenantViewSetMixin, viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, IsOrganizationAdmin]
     serializer_class = HolidayClosureSerializer
     queryset = HolidayClosure.objects.all().order_by("date")
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -199,7 +201,7 @@ class HolidayClosureViewSet(viewsets.ModelViewSet):
     ordering_fields = ["date"]
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="HolidayClosure",
             entity_id=instance.id,
@@ -209,7 +211,7 @@ class HolidayClosureViewSet(viewsets.ModelViewSet):
         )
 
     def perform_update(self, serializer):
-        instance = serializer.save()
+        instance = serializer.save(organization=self.request.organization)
         AuditService.record_availability_changed(
             entity_type="HolidayClosure",
             entity_id=instance.id,

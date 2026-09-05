@@ -22,7 +22,7 @@ class UserManager(BaseUserManager):
 
         email = self.normalize_email(email)
         extra_fields.setdefault("is_active", True)
-        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
 
         user = self.model(email=email, **extra_fields)
@@ -82,7 +82,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     is_staff = models.BooleanField(
         _("staff status"),
-        default=True,
+        default=False,
         help_text=_("Designates whether the user can log into the Django admin site."),
     )
     is_superuser = models.BooleanField(
@@ -90,6 +90,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text=_("Designates that this user has all permissions without explicitly assigning them."),
     )
+    email_verified_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(
         _("created at"),
         auto_now_add=True,
@@ -117,3 +118,28 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def get_short_name(self):
         return self.full_name.split()[0] if self.full_name else self.email
+
+
+class AdminAuditLog(models.Model):
+    """
+    Audit log for tracking all sensitive super admin actions.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    admin_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="admin_audit_logs")
+    admin_email = models.EmailField(_("admin email"), max_length=255)
+    action = models.CharField(_("action name"), max_length=100)
+    target_type = models.CharField(_("target entity type"), max_length=100, blank=True)
+    target_id = models.CharField(_("target entity ID"), max_length=255, blank=True)
+    target_name = models.CharField(_("target name"), max_length=255, blank=True)
+    previous_state = models.JSONField(_("previous state"), default=dict, blank=True)
+    new_state = models.JSONField(_("new state"), default=dict, blank=True)
+    ip_address = models.GenericIPAddressField(_("IP address"), null=True, blank=True)
+    created_at = models.DateTimeField(_("created at"), auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = _("admin audit log")
+        verbose_name_plural = _("admin audit logs")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.admin_email} - {self.action} on {self.target_name or self.target_id} at {self.created_at}"

@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import configure_channel, test_workspace, make_organization, create_lead, add_member
 """
 Tests for Instagram Outbound Messaging.
 Validates recipient ID resolution, payload formatting, error handling, and 24h window enforcement.
@@ -26,14 +27,16 @@ class InstagramOutboundMessagingTests(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        configure_channel(destination="90001")
         self.admin = User.objects.create_superuser(
             email="admin@v4studio.test",
             password="StrongPassword123!",
             full_name="Admin User",
         )
+        add_member(self.admin)
         self.client.force_authenticate(user=self.admin)
 
-        self.service = PhotographyService.objects.create(
+        self.service = PhotographyService.objects.create(organization=test_workspace(),
             name="Baby Portrait Session",
             slug="baby-portrait-session",
             base_price=15000.00,
@@ -41,7 +44,7 @@ class InstagramOutboundMessagingTests(TestCase):
             is_active=True,
         )
 
-        self.customer = Customer.objects.create(
+        self.customer = Customer.objects.create(organization=test_workspace(),
             display_name="Gorke Saikumar",
             primary_phone="+919876543210",
         )
@@ -54,7 +57,7 @@ class InstagramOutboundMessagingTests(TestCase):
             username="gorkesakumar",
         )
 
-        self.conversation = Conversation.objects.create(
+        self.conversation = Conversation.objects.create(organization=test_workspace(),
             customer=self.customer,
             channel="INSTAGRAM",
         )
@@ -65,10 +68,10 @@ class InstagramOutboundMessagingTests(TestCase):
             direction=Message.Direction.INBOUND,
             text="Hi, I want to book a session",
             external_message_id="mid_test_123",
-            created_at=timezone.now(),
+            provider_timestamp=timezone.now(),
         )
 
-        self.lead = Lead.objects.create(
+        self.lead = create_lead(
             customer=self.customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -118,7 +121,7 @@ class InstagramOutboundMessagingTests(TestCase):
 
         mock_post.assert_called_once()
         endpoint, data = mock_post.call_args[0]
-        self.assertEqual(endpoint, "me/messages")
+        self.assertEqual(endpoint, "90001/messages")
         self.assertEqual(data["recipient"]["id"], self.valid_igsid)
         self.assertNotEqual(data["recipient"]["id"], str(self.customer.id))
         self.assertNotEqual(data["recipient"]["id"], str(self.lead.id))
@@ -133,8 +136,8 @@ class InstagramOutboundMessagingTests(TestCase):
         payload = {"message": "Hello!"}
 
         response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data.get("error_code"), "no_instagram_identity")
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data.get("code"), "missing_identity")
 
     def test_send_message_rejects_mock_user_id(self):
         """If customer identity contains dummy 'USER_A', reject before calling Meta."""
@@ -145,22 +148,22 @@ class InstagramOutboundMessagingTests(TestCase):
         payload = {"message": "Hello!"}
 
         response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data.get("error_code"), "invalid_recipient_id")
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data.get("code"), "invalid_recipient_id")
 
     def test_send_message_blocked_outside_24h_window(self):
         """Outbound message must be blocked if >24 hours have elapsed since last inbound message."""
         # Age the inbound message to 25 hours ago
         Message.objects.filter(id=self.inbound_msg.id).update(
-            created_at=timezone.now() - timedelta(hours=25)
+            provider_timestamp=timezone.now() - timedelta(hours=25)
         )
 
         url = f"/api/v1/leads/{self.lead.id}/messages/"
         payload = {"message": "Hello outside window!"}
 
         response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data.get("error_code"), "messaging_window_closed")
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data.get("code"), "messaging_window_closed")
 
     @patch("apps.integrations.meta.common.client.MetaGraphClient.post")
     def test_send_booking_link_uses_igsid(self, mock_post):
@@ -175,7 +178,7 @@ class InstagramOutboundMessagingTests(TestCase):
 
         mock_post.assert_called_once()
         endpoint, data = mock_post.call_args[0]
-        self.assertEqual(endpoint, "me/messages")
+        self.assertEqual(endpoint, "90001/messages")
         self.assertEqual(data["recipient"]["id"], self.valid_igsid)
 
     @patch("apps.integrations.meta.common.client.MetaGraphClient.post")
@@ -204,14 +207,16 @@ class InstagramOutboundRegressionTests(TestCase):
         from django.contrib.auth import get_user_model
         User = get_user_model()
         self.client = APIClient()
+        configure_channel(destination="90001")
         self.admin = User.objects.create_superuser(
             email="admin@v4studio.test",
             password="StrongPassword123!",
             full_name="Admin User",
         )
+        add_member(self.admin)
         self.client.force_authenticate(user=self.admin)
 
-        self.service = PhotographyService.objects.create(
+        self.service = PhotographyService.objects.create(organization=test_workspace(),
             name="Baby Portrait Session",
             slug="baby-portrait-regression",
             base_price=15000.00,
@@ -262,7 +267,7 @@ class InstagramOutboundRegressionTests(TestCase):
             "text": "I want to book a session",
             "message_type": "TEXT",
             "provider_timestamp": None,
-        })
+        }, organization=test_workspace())
 
         identity = CustomerIdentity.objects.filter(
             channel="INSTAGRAM",
@@ -285,7 +290,7 @@ class InstagramOutboundRegressionTests(TestCase):
             "external_message_id": "mid_first_msg",
             "text": "Hello",
             "message_type": "TEXT",
-        })
+        }, organization=test_workspace())
 
         # Second message from same sender
         ConversationService.store_inbound_message({
@@ -294,7 +299,7 @@ class InstagramOutboundRegressionTests(TestCase):
             "external_message_id": "mid_second_msg",
             "text": "What sessions do you offer?",
             "message_type": "TEXT",
-        })
+        }, organization=test_workspace())
 
         identity_count = CustomerIdentity.objects.filter(
             channel="INSTAGRAM",
@@ -308,7 +313,7 @@ class InstagramOutboundRegressionTests(TestCase):
         REAL_IGSID = "556677889900112"
         mock_post.return_value = {"message_id": "mid_out_test_999"}
 
-        customer = Customer.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(),
             display_name="Test Customer",
             primary_phone="+919876543210",
         )
@@ -317,15 +322,15 @@ class InstagramOutboundRegressionTests(TestCase):
             channel="INSTAGRAM",
             external_user_id=REAL_IGSID,
         )
-        conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+        conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
         Message.objects.create(
             conversation=conversation,
             direction=Message.Direction.INBOUND,
             text="Test message",
             external_message_id="mid_inbound_for_window",
-            created_at=timezone.now(),
+            provider_timestamp=timezone.now(),
         )
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -356,9 +361,9 @@ class InstagramOutboundRegressionTests(TestCase):
 
     def test_missing_instagram_identity_returns_structured_error(self):
         """Missing Instagram identity must return error_code=no_instagram_identity, not generic failure."""
-        customer = Customer.objects.create(display_name="No Identity Customer")
-        conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
-        lead = Lead.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="No Identity Customer")
+        conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -372,20 +377,20 @@ class InstagramOutboundRegressionTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(response.data.get("error_code"), "no_instagram_identity")
-        self.assertIn("Instagram", response.data.get("message", ""))
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data.get("code"), "missing_identity")
+        self.assertIn("external contact identity", response.data.get("message", ""))
 
     def test_closed_messaging_window_blocks_outbound_message(self):
         """Messaging window > 24h must return error_code=messaging_window_closed."""
         REAL_IGSID = "444333222111000"
-        customer = Customer.objects.create(display_name="Window Closed Customer")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Window Closed Customer")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="INSTAGRAM",
             external_user_id=REAL_IGSID,
         )
-        conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+        conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
         # Seed inbound message 25h ago (outside window)
         Message.objects.create(
             conversation=conversation,
@@ -394,7 +399,7 @@ class InstagramOutboundRegressionTests(TestCase):
             external_message_id="mid_old_msg",
             provider_timestamp=timezone.now() - timedelta(hours=25),
         )
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -408,8 +413,8 @@ class InstagramOutboundRegressionTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(response.data.get("error_code"), "messaging_window_closed")
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(response.data.get("code"), "messaging_window_closed")
 
     @patch("apps.integrations.meta.common.client.MetaGraphClient.post")
     def test_open_messaging_window_allows_outbound_message(self, mock_post):
@@ -417,13 +422,13 @@ class InstagramOutboundRegressionTests(TestCase):
         REAL_IGSID = "333444555666777"
         mock_post.return_value = {"message_id": "mid_window_open_test"}
 
-        customer = Customer.objects.create(display_name="Window Open Customer")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Window Open Customer")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="INSTAGRAM",
             external_user_id=REAL_IGSID,
         )
-        conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+        conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
         # Seed inbound message 5 minutes ago (inside window)
         Message.objects.create(
             conversation=conversation,
@@ -432,7 +437,7 @@ class InstagramOutboundRegressionTests(TestCase):
             external_message_id="mid_recent_msg",
             provider_timestamp=timezone.now() - timedelta(minutes=5),
         )
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -454,13 +459,13 @@ class InstagramOutboundRegressionTests(TestCase):
         REAL_IGSID = "222333444555666"
         mock_post.return_value = {"message_id": "mid_sent_test_001"}
 
-        customer = Customer.objects.create(display_name="Sent Status Customer")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Sent Status Customer")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="INSTAGRAM",
             external_user_id=REAL_IGSID,
         )
-        conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+        conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
         Message.objects.create(
             conversation=conversation,
             direction=Message.Direction.INBOUND,
@@ -468,7 +473,7 @@ class InstagramOutboundRegressionTests(TestCase):
             external_message_id="mid_inbound_sent_test",
             provider_timestamp=timezone.now(),
         )
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -498,13 +503,13 @@ class InstagramOutboundRegressionTests(TestCase):
         REAL_IGSID = "111222333444555"
         mock_post.side_effect = ProviderSendError("Simulated Meta failure", code=500)
 
-        customer = Customer.objects.create(display_name="Meta Failure Customer")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Meta Failure Customer")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="INSTAGRAM",
             external_user_id=REAL_IGSID,
         )
-        conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+        conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
         Message.objects.create(
             conversation=conversation,
             direction=Message.Direction.INBOUND,
@@ -512,7 +517,7 @@ class InstagramOutboundRegressionTests(TestCase):
             external_message_id="mid_fail_trigger",
             provider_timestamp=timezone.now(),
         )
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             status=Lead.Status.NEW,
@@ -531,7 +536,7 @@ class InstagramOutboundRegressionTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertEqual(response.data.get("error_code"), "send_failed")
+        self.assertEqual(response.data.get("error_code"), "provider_rejected")
 
         # OUTBOUND message MUST be persisted with FAILED status
         outbound_count = Message.objects.filter(
@@ -543,7 +548,8 @@ class InstagramOutboundRegressionTests(TestCase):
             conversation=conversation, direction=Message.Direction.OUTBOUND
         ).latest("created_at")
         self.assertEqual(failed_msg.delivery_status, Message.DeliveryStatus.FAILED)
-        self.assertEqual(failed_msg.raw_payload.get("error"), "Simulated Meta failure")
+        self.assertEqual(failed_msg.error_code, "provider_rejected")
+        self.assertIn("Meta did not accept", failed_msg.error_message)
 
     def test_frontend_does_not_need_to_send_recipient_id(self):
         """
@@ -555,13 +561,13 @@ class InstagramOutboundRegressionTests(TestCase):
         with patch("apps.integrations.meta.common.client.MetaGraphClient.post") as mock_post:
             mock_post.return_value = {"message_id": "mid_no_recipient_field_test"}
 
-            customer = Customer.objects.create(display_name="Frontend Test Customer")
+            customer = Customer.objects.create(organization=test_workspace(), display_name="Frontend Test Customer")
             CustomerIdentity.objects.create(
                 customer=customer,
                 channel="INSTAGRAM",
                 external_user_id=REAL_IGSID,
             )
-            conversation = Conversation.objects.create(customer=customer, channel="INSTAGRAM")
+            conversation = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="INSTAGRAM")
             Message.objects.create(
                 conversation=conversation,
                 direction=Message.Direction.INBOUND,
@@ -569,7 +575,7 @@ class InstagramOutboundRegressionTests(TestCase):
                 external_message_id="mid_frontend_test",
                 provider_timestamp=timezone.now(),
             )
-            lead = Lead.objects.create(
+            lead = create_lead(
                 customer=customer,
                 source_channel="INSTAGRAM",
                 status=Lead.Status.NEW,
@@ -589,4 +595,3 @@ class InstagramOutboundRegressionTests(TestCase):
             # Verify the correct IGSID was used, NOT anything from the request
             _, call_data = mock_post.call_args[0]
             self.assertEqual(call_data["recipient"]["id"], REAL_IGSID)
-

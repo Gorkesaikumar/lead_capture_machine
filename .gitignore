@@ -67,3 +67,14 @@ coverage.xml
 docker-data/
 postgres_data/
 redis_data/
+
+
+# Test/browser artifacts
+frontend/test-results/
+frontend/playwright-report/
+
+# Local development files
+prompt.txt
+user_prompt.txt
+screen.png
+code.html

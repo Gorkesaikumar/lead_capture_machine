@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 import threading
 from django.test import TransactionTestCase
 from django.db import connection, transaction
@@ -14,21 +15,21 @@ class LeadDetectionConcurrencyTest(TransactionTestCase):
 
     def setUp(self):
         # Create a customer
-        self.customer = Customer.objects.create(
+        self.customer = Customer.objects.create(organization=test_workspace(),
             display_name="Test Customer",
             email="test@customer.com",
             primary_phone="+1234567890",
         )
         
         # Create a trigger
-        self.trigger = LeadTrigger.objects.create(
+        self.trigger = LeadTrigger.objects.create(organization=test_workspace(),
             phrase="book a session",
             match_type=LeadTrigger.MatchType.CONTAINS,
             is_active=True
         )
 
         # Create two concurrent conversations (or one, but two messages)
-        self.conversation = Conversation.objects.create(
+        self.conversation = Conversation.objects.create(organization=test_workspace(),
             customer=self.customer,
             channel="WHATSAPP",
             external_thread_id="12345"

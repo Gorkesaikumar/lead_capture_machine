@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import route_payload, process_test_webhook_payload, configure_channel, test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive unit and integration tests for Meta WhatsApp Cloud API module.
 Tests GET challenge verification, POST HMAC signature verification, status update tracking,
@@ -62,6 +63,7 @@ def configure_meta_settings(settings, test_app_secret, test_verify_token):
     settings.WHATSAPP_BOOKING_TEMPLATE_NAME = "studio_booking_invitation"
     settings.WHATSAPP_DEFAULT_LANGUAGE = "en"
     settings.CELERY_TASK_ALWAYS_EAGER = True
+    route_payload(SAMPLE_WA_TEXT_MESSAGE_PAYLOAD)
 
 
 def generate_meta_signature(raw_body: bytes, secret: str) -> str:
@@ -213,13 +215,13 @@ class TestWhatsAppPipelineAndIdempotency:
 
     @pytest.fixture
     def newborn_trigger(self):
-        svc = PhotographyService.objects.create(
+        svc = PhotographyService.objects.create(organization=test_workspace(),
             name="Newborn Session",
             slug="newborn-session",
             duration_minutes=90,
             base_price=500.00,
         )
-        return LeadTrigger.objects.create(
+        return LeadTrigger.objects.create(organization=test_workspace(),
             phrase="newborn shoot",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=svc,
@@ -233,7 +235,7 @@ class TestWhatsAppPipelineAndIdempotency:
         raw_body = json.dumps(SAMPLE_WA_TEXT_MESSAGE_PAYLOAD).encode("utf-8")
         sig_header = generate_meta_signature(raw_body, test_app_secret)
 
-        result = InboundPipelineService.process_webhook_payload(
+        result = process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig_header,
             payload=SAMPLE_WA_TEXT_MESSAGE_PAYLOAD,
@@ -271,7 +273,7 @@ class TestWhatsAppPipelineAndIdempotency:
         sig_header = generate_meta_signature(raw_body, test_app_secret)
 
         # 1st delivery
-        res1 = InboundPipelineService.process_webhook_payload(
+        res1 = process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig_header,
             payload=SAMPLE_WA_TEXT_MESSAGE_PAYLOAD,
@@ -281,7 +283,7 @@ class TestWhatsAppPipelineAndIdempotency:
         assert res1["leads_created"] == 1
 
         # 2nd delivery (duplicate)
-        res2 = InboundPipelineService.process_webhook_payload(
+        res2 = process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig_header,
             payload=SAMPLE_WA_TEXT_MESSAGE_PAYLOAD,
@@ -302,13 +304,13 @@ class TestWhatsAppStatusUpdates:
 
     def test_status_update_lifecycle_flow(self, configure_meta_settings, test_app_secret):
         # 1. Store initial outbound message
-        customer = Customer.objects.create(display_name="Test Customer")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Test Customer")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="WHATSAPP",
             external_user_id="919876543210",
         )
-        conv = Conversation.objects.create(customer=customer, channel="WHATSAPP")
+        conv = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="WHATSAPP")
         msg = ConversationService.store_outbound_message(
             conversation=conv,
             text="Your appointment is confirmed!",
@@ -319,7 +321,7 @@ class TestWhatsAppStatusUpdates:
         # 2. Ingest DELIVERED status webhook
         raw_body_del = json.dumps(SAMPLE_WA_STATUS_DELIVERED_PAYLOAD).encode("utf-8")
         sig_del = generate_meta_signature(raw_body_del, test_app_secret)
-        InboundPipelineService.process_webhook_payload(
+        process_test_webhook_payload(
             raw_body=raw_body_del,
             signature_header=sig_del,
             payload=SAMPLE_WA_STATUS_DELIVERED_PAYLOAD,
@@ -331,7 +333,7 @@ class TestWhatsAppStatusUpdates:
         # 3. Ingest READ status webhook
         raw_body_read = json.dumps(SAMPLE_WA_STATUS_READ_PAYLOAD).encode("utf-8")
         sig_read = generate_meta_signature(raw_body_read, test_app_secret)
-        InboundPipelineService.process_webhook_payload(
+        process_test_webhook_payload(
             raw_body=raw_body_read,
             signature_header=sig_read,
             payload=SAMPLE_WA_STATUS_READ_PAYLOAD,
@@ -341,13 +343,13 @@ class TestWhatsAppStatusUpdates:
         assert msg.delivery_status == Message.DeliveryStatus.READ
 
     def test_failed_status_records_error_details(self, configure_meta_settings, test_app_secret):
-        customer = Customer.objects.create(display_name="Failed Test Customer")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Failed Test Customer")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="WHATSAPP",
             external_user_id="919876543210",
         )
-        conv = Conversation.objects.create(customer=customer, channel="WHATSAPP")
+        conv = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="WHATSAPP")
         msg = ConversationService.store_outbound_message(
             conversation=conv,
             text="Reminder message",
@@ -356,7 +358,7 @@ class TestWhatsAppStatusUpdates:
 
         raw_body = json.dumps(SAMPLE_WA_STATUS_FAILED_PAYLOAD).encode("utf-8")
         sig = generate_meta_signature(raw_body, test_app_secret)
-        InboundPipelineService.process_webhook_payload(
+        process_test_webhook_payload(
             raw_body=raw_body,
             signature_header=sig,
             payload=SAMPLE_WA_STATUS_FAILED_PAYLOAD,
@@ -374,13 +376,13 @@ class TestWhatsAppCustomerServiceWindowAndTemplates:
 
     def test_24h_window_active_sends_free_form_message(self, configure_meta_settings):
         # Create customer with recent inbound message (1 hour ago)
-        customer = Customer.objects.create(display_name="Active Client")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Active Client")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="WHATSAPP",
             external_user_id="919888877776",
         )
-        conv = Conversation.objects.create(customer=customer, channel="WHATSAPP")
+        conv = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="WHATSAPP")
         ConversationService.store_inbound_message({
             "channel": "WHATSAPP",
             "external_message_id": "wamid.RECENT_INBOUND_01",
@@ -388,9 +390,9 @@ class TestWhatsAppCustomerServiceWindowAndTemplates:
             "text": "Hello!",
             "message_type": "TEXT",
             "provider_timestamp": timezone.now() - timedelta(hours=1),
-        })
+        }, organization=test_workspace())
 
-        provider = WhatsAppMessagingProvider()
+        provider = WhatsAppMessagingProvider(organization=test_workspace())
         assert provider.is_free_form_permitted("919888877776") is True
 
         with patch.object(MetaGraphClient, "post") as mock_post:
@@ -411,13 +413,13 @@ class TestWhatsAppCustomerServiceWindowAndTemplates:
 
     def test_24h_window_expired_uses_approved_template(self, configure_meta_settings):
         # Customer has no recent message (older than 24 hours)
-        customer = Customer.objects.create(display_name="Old Client")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Old Client")
         CustomerIdentity.objects.create(
             customer=customer,
             channel="WHATSAPP",
             external_user_id="919111222333",
         )
-        conv = Conversation.objects.create(customer=customer, channel="WHATSAPP")
+        conv = Conversation.objects.create(organization=test_workspace(), customer=customer, channel="WHATSAPP")
         ConversationService.store_inbound_message({
             "channel": "WHATSAPP",
             "external_message_id": "wamid.OLD_INBOUND_01",
@@ -425,9 +427,9 @@ class TestWhatsAppCustomerServiceWindowAndTemplates:
             "text": "Old message",
             "message_type": "TEXT",
             "provider_timestamp": timezone.now() - timedelta(hours=30),
-        })
+        }, organization=test_workspace())
 
-        provider = WhatsAppMessagingProvider()
+        provider = WhatsAppMessagingProvider(organization=test_workspace())
         assert provider.is_free_form_permitted("919111222333") is False
 
         with patch.object(MetaGraphClient, "post") as mock_post:
@@ -455,7 +457,7 @@ class TestWhatsAppOutboundMessagingAndTasks:
     @patch.object(MetaGraphClient, "post")
     def test_send_media_message(self, mock_post, configure_meta_settings):
         mock_post.return_value = {"messages": [{"id": "wamid.MEDIA_OUT_1"}]}
-        provider = WhatsAppMessagingProvider()
+        provider = WhatsAppMessagingProvider(organization=test_workspace())
 
         res = provider.send_media_message(
             recipient_id="919876543210",
@@ -471,43 +473,14 @@ class TestWhatsAppOutboundMessagingAndTasks:
         assert call_payload["image"]["link"] == "https://cdn.studio.com/preview.jpg"
         assert call_payload["image"]["caption"] == "Sample preview shot"
 
-    def test_send_whatsapp_message_celery_task(self):
-        with patch("apps.integrations.tasks.WhatsAppMessagingProvider") as MockProvider, \
-             patch("apps.integrations.tasks.ConversationService.update_message_delivery_status") as mock_update:
-            
-            mock_instance = MockProvider.return_value
-            mock_instance.send_text_message.return_value = OutboundResult(
-                success=True, external_message_id="wamid.CELERY_TEST_101"
-            )
+    def test_legacy_message_task_rejects_unscoped_send(self):
+        with patch.object(WhatsAppMessagingProvider, "send_text_message") as send:
+            result = send_whatsapp_message_task("919876543210", "Hello", "nonexistent-local-message")
+        assert result["success"] is False
+        send.assert_not_called()
 
-            from apps.conversations.models import Message, Conversation
-            from apps.customers.models import Customer
-            customer = Customer.objects.create(display_name="Celery Recipient")
-            conv = Conversation.objects.create(customer=customer, channel="WHATSAPP")
-            msg = Message.objects.create(
-                conversation=conv, 
-                direction="OUTBOUND", 
-                external_message_id="local_celery_test_id", 
-                text="Hello via Celery"
-            )
-
-            result = send_whatsapp_message_task("919876543210", "Hello via Celery", "local_celery_test_id")
-
-            assert result["success"] is True
-            assert result["external_message_id"] == "wamid.CELERY_TEST_101"
-            mock_instance.send_text_message.assert_called_once_with(
-                recipient_id="919876543210", text="Hello via Celery"
-            )
-            mock_update.assert_called_once_with(
-                external_message_id="local_celery_test_id", delivery_status="SENT"
-            )
-
-    @patch.object(WhatsAppMessagingProvider, "send_booking_link_message")
-    def test_send_whatsapp_booking_link_celery_task(self, mock_send):
-        mock_send.return_value = OutboundResult(success=True, external_message_id="wamid.CELERY_BOOKING_1")
-
-        result = send_whatsapp_booking_link_task(
-            "919876543210", "https://studio.com/book/123", "Customer Name", "Portrait Session"
-        )
-        assert result["success"] is True
-        assert result["external_message_id"] == "wamid.CELERY_BOOKING_1"
+    def test_legacy_booking_task_requires_conversation(self):
+        with patch.object(WhatsAppMessagingProvider, "send_booking_link_message") as send:
+            result = send_whatsapp_booking_link_task("919876543210", "https://studio.com/book/123", "Customer", "Portrait")
+        assert result["success"] is False
+        send.assert_not_called()

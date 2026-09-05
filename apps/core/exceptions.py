@@ -193,6 +193,16 @@ def custom_exception_handler(exc: Exception, context: dict) -> Optional[Response
             message = "The requested resource was not found."
             errors = {}
 
+        elif exc.__class__.__name__ == "MessagingUnavailable":
+            detail = exc.detail
+            code = str(detail.get("code", "configuration_required")) if isinstance(detail, dict) else "configuration_required"
+            message = str(detail.get("message", detail)) if isinstance(detail, dict) else str(detail)
+            errors = {}
+
+        elif isinstance(exc, APIException) and getattr(exc, "default_code", "") == "payment_unavailable":
+            code = "payment_unavailable"
+            message = str(exc.detail)
+
         elif isinstance(exc, APIException):
             code = getattr(exc, "default_code", "api_error") or "api_error"
             message = "An error occurred. Please try again."

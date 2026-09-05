@@ -60,3 +60,48 @@ class StructuredLoggingMiddleware:
             )
 
         return response
+
+
+class TenantMiddleware:
+    """
+    Resolves the active Organization for the current request.
+    Extracts from X-Organization-ID header, fallback to first active membership for authenticated users.
+    """
+    HEADER_NAME = "HTTP_X_ORGANIZATION_ID"
+
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponse]):
+        self.get_response = get_response
+
+    def __call__(self, request: HttpRequest) -> HttpResponse:
+        from apps.organizations.models import Organization, OrganizationMembership
+
+        request.organization = None
+        request.membership = None
+        org_id = request.META.get(self.HEADER_NAME)
+
+        if org_id:
+            try:
+                request.organization = Organization.objects.get(id=org_id, is_active=True, is_deleted=False)
+            except (Organization.DoesNotExist, ValueError, __import__("django.core.exceptions", fromlist=["ValidationError"]).ValidationError):
+                pass
+
+        # Fallback: if user is authenticated and has memberships, but no header is provided
+        if not request.organization and hasattr(request, "user") and request.user.is_authenticated:
+            # Try to get the first active organization membership
+            first_membership = request.user.memberships.filter(is_active=True, organization__is_active=True, organization__is_deleted=False).first()
+            if first_membership:
+                request.organization = first_membership.organization
+                request.membership = first_membership
+
+        if request.organization and not request.membership and hasattr(request, "user") and request.user.is_authenticated:
+            try:
+                request.membership = OrganizationMembership.objects.get(
+                    organization=request.organization,
+                    user=request.user,
+                    is_active=True
+                )
+            except OrganizationMembership.DoesNotExist:
+                # If they specify an org header but aren't an active member, deny the org context
+                request.organization = None
+
+        return self.get_response(request)

@@ -99,6 +99,8 @@ class AnalyticsDateRange:
         return cls(start_datetime=start_dt, end_datetime=end_dt, preset=preset_name)
 
 
+from apps.conversations.models import Conversation
+
 class AnalyticsService:
     """
     High-performance backend analytics engine.
@@ -106,20 +108,20 @@ class AnalyticsService:
     """
 
     @classmethod
-    def get_dashboard_summary(cls, date_range: AnalyticsDateRange) -> Dict[str, Any]:
+    def get_dashboard_summary(cls, date_range: AnalyticsDateRange, organization) -> Dict[str, Any]:
         """
         Generates full summary of business metrics for the Admin Dashboard.
-        Executes in exactly 4 optimized PostgreSQL queries.
         """
-        leads_metrics = cls.get_leads_metrics(date_range)
-        bookings_metrics = cls.get_bookings_metrics(date_range)
+        leads_metrics = cls.get_leads_metrics(date_range, organization)
+        bookings_metrics = cls.get_bookings_metrics(date_range, organization)
         source_breakdown = cls.get_lead_source_breakdown(
-            date_range, total_leads_all=leads_metrics["total_leads"]
+            date_range, organization, total_leads_all=leads_metrics["total_leads"]
         )
         popular_services = cls.get_popular_services(
-            date_range, total_bookings_all=bookings_metrics["total_bookings"], limit=5
+            date_range, organization, total_bookings_all=bookings_metrics["total_bookings"], limit=5
         )
-        timeseries = cls.get_bookings_timeseries(date_range)
+        timeseries = cls.get_bookings_timeseries(date_range, organization)
+        leads_timeseries = cls.get_leads_timeseries(date_range, organization)
 
         return {
             "date_range": {
@@ -132,14 +134,15 @@ class AnalyticsService:
             "lead_source_breakdown": source_breakdown,
             "popular_services": popular_services,
             "timeseries": timeseries,
+            "leads_timeseries": leads_timeseries,
         }
 
     @classmethod
-    def get_leads_metrics(cls, date_range: AnalyticsDateRange) -> Dict[str, Any]:
+    def get_leads_metrics(cls, date_range: AnalyticsDateRange, organization) -> Dict[str, Any]:
         """
         Aggregates lead volume, channel counts, qualification counts, and conversion rate.
         """
-        qs = Lead.objects.all()
+        qs = Lead.objects.filter(organization=organization)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -149,28 +152,35 @@ class AnalyticsService:
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         today_end = today_start + timedelta(days=1)
 
+        # Open Conversations
+        open_conversations = Conversation.objects.filter(
+            organization=organization,
+            status=Conversation.Status.ACTIVE
+        ).count()
+
         # Single DB query conditional aggregate
         agg = qs.aggregate(
             total_leads=Count("id"),
             instagram_leads=Count("id", filter=Q(source_channel="INSTAGRAM")),
             whatsapp_leads=Count("id", filter=Q(source_channel="WHATSAPP")),
+            website_leads=Count("id", filter=Q(source_channel="WEBSITE")),
             qualified_leads=Count(
                 "id",
-                filter=Q(status__in=[Lead.Status.QUALIFIED, Lead.Status.BOOKING_LINK_SENT, Lead.Status.BOOKED, Lead.Status.COMPLETED])
+                filter=Q(status__in=[Lead.Status.QUALIFIED, Lead.Status.CONVERTED])
                 | Q(qualified_at__isnull=False),
-            ),
-            booking_links_sent=Count(
-                "id",
-                filter=Q(status__in=[Lead.Status.BOOKING_LINK_SENT, Lead.Status.BOOKED, Lead.Status.COMPLETED]),
             ),
             converted_leads=Count(
                 "id",
-                filter=Q(status__in=[Lead.Status.BOOKED, Lead.Status.COMPLETED]),
+                filter=Q(status=Lead.Status.CONVERTED),
             ),
             new_leads_today=Count(
                 "id",
                 filter=Q(created_at__gte=today_start, created_at__lt=today_end),
             ),
+            status_new=Count("id", filter=Q(status=Lead.Status.NEW)),
+            status_contacted=Count("id", filter=Q(status=Lead.Status.CONTACTED)),
+            status_qualified=Count("id", filter=Q(status=Lead.Status.QUALIFIED)),
+            status_lost=Count("id", filter=Q(status=Lead.Status.LOST)),
         )
 
         total = agg["total_leads"] or 0
@@ -182,18 +192,34 @@ class AnalyticsService:
             "new_leads_today": agg["new_leads_today"] or 0,
             "instagram_leads": agg["instagram_leads"] or 0,
             "whatsapp_leads": agg["whatsapp_leads"] or 0,
+            "website_leads": agg["website_leads"] or 0,
+            "open_conversations": open_conversations,
             "qualified_leads": agg["qualified_leads"] or 0,
-            "booking_links_sent": agg["booking_links_sent"] or 0,
+            "booking_links_sent": cls._booking_links_sent(organization, date_range),
             "converted_leads": converted,
             "lead_to_booking_conversion_rate": conversion_rate,
+            "status_new": agg["status_new"] or 0,
+            "status_contacted": agg["status_contacted"] or 0,
+            "status_qualified": agg["status_qualified"] or 0,
+            "status_lost": agg["status_lost"] or 0,
         }
 
+    @staticmethod
+    def _booking_links_sent(organization, date_range):
+        from apps.notifications.models import Notification
+        sent = Notification.objects.filter(customer__organization=organization, notification_type="BOOKING_LINK", status__in=["SENT", "DELIVERED", "READ"])
+        if date_range.start_datetime:
+            sent = sent.filter(sent_at__gte=date_range.start_datetime)
+        if date_range.end_datetime:
+            sent = sent.filter(sent_at__lte=date_range.end_datetime)
+        return sent.count()
+
     @classmethod
-    def get_bookings_metrics(cls, date_range: AnalyticsDateRange) -> Dict[str, Any]:
+    def get_bookings_metrics(cls, date_range: AnalyticsDateRange, organization) -> Dict[str, Any]:
         """
         Aggregates booking volume, calendar day metrics, and statuses.
         """
-        qs = Booking.objects.all()
+        qs = Booking.objects.filter(customer__organization=organization)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -244,12 +270,12 @@ class AnalyticsService:
 
     @classmethod
     def get_lead_source_breakdown(
-        cls, date_range: AnalyticsDateRange, total_leads_all: Optional[int] = None
+        cls, date_range: AnalyticsDateRange, organization, total_leads_all: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
-        Groups leads by source channel (Instagram / WhatsApp) and computes conversion by source.
+        Groups leads by source channel (Instagram / WhatsApp / Website) and computes conversion by source.
         """
-        qs = Lead.objects.all()
+        qs = Lead.objects.filter(organization=organization)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -261,16 +287,14 @@ class AnalyticsService:
                 total=Count("id"),
                 converted=Count(
                     "id",
-                    filter=Q(status__in=[Lead.Status.BOOKED, Lead.Status.COMPLETED]),
+                    filter=Q(status=Lead.Status.CONVERTED),
                 ),
                 qualified=Count(
                     "id",
                     filter=Q(
                         status__in=[
                             Lead.Status.QUALIFIED,
-                            Lead.Status.BOOKING_LINK_SENT,
-                            Lead.Status.BOOKED,
-                            Lead.Status.COMPLETED,
+                            Lead.Status.CONVERTED,
                         ]
                     )
                     | Q(qualified_at__isnull=False),
@@ -307,13 +331,14 @@ class AnalyticsService:
     def get_popular_services(
         cls,
         date_range: AnalyticsDateRange,
+        organization,
         total_bookings_all: Optional[int] = None,
         limit: int = 5,
     ) -> List[Dict[str, Any]]:
         """
         Ranks photography services by active bookings and completed sessions.
         """
-        qs = Booking.objects.exclude(status=Booking.Status.CANCELLED)
+        qs = Booking.objects.filter(customer__organization=organization).exclude(status=Booking.Status.CANCELLED)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -352,11 +377,10 @@ class AnalyticsService:
 
         return results
 
-
     @classmethod
-    def get_bookings_timeseries(cls, date_range: AnalyticsDateRange) -> List[Dict[str, Any]]:
+    def get_bookings_timeseries(cls, date_range: AnalyticsDateRange, organization) -> List[Dict[str, Any]]:
         from django.db.models.functions import TruncDate
-        qs = Booking.objects.all()
+        qs = Booking.objects.filter(customer__organization=organization)
         if date_range.start_datetime:
             qs = qs.filter(created_at__gte=date_range.start_datetime)
         if date_range.end_datetime:
@@ -382,5 +406,35 @@ class AnalyticsService:
                 "total": row['total'],
                 "completed": row['completed'],
                 "cancelled": row['cancelled']
+            })
+        return results
+
+    @classmethod
+    def get_leads_timeseries(cls, date_range: AnalyticsDateRange, organization) -> List[Dict[str, Any]]:
+        from django.db.models.functions import TruncDate
+        qs = Lead.objects.filter(organization=organization)
+        if date_range.start_datetime:
+            qs = qs.filter(created_at__gte=date_range.start_datetime)
+        if date_range.end_datetime:
+            qs = qs.filter(created_at__lte=date_range.end_datetime)
+
+        timeseries = list(
+            qs.annotate(date=TruncDate('created_at'))
+            .values('date')
+            .annotate(
+                total=Count('id'),
+                converted=Count('id', filter=Q(status=Lead.Status.CONVERTED))
+            )
+            .order_by('date')
+        )
+
+        results = []
+        for row in timeseries:
+            if not row['date']:
+                continue
+            results.append({
+                "date": row['date'].isoformat(),
+                "total": row['total'],
+                "converted": row['converted'],
             })
         return results

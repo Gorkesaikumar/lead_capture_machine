@@ -181,7 +181,7 @@ export default function AnalyticsDashboard() {
                   <Tooltip 
                     contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                     cursor={{ fill: '#f1f5f9' }}
-                    formatter={(value: any, name: any) => [value, name === 'booking_count' ? 'Bookings' : 'Est. Revenue ($)']}
+                    formatter={(value: any, name: any) => [value, name]}
                   />
                   <Legend iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
                   <Bar dataKey="booking_count" name="Bookings" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={24} />

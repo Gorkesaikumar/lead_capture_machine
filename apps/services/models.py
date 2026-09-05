@@ -15,16 +15,21 @@ class PhotographyService(CoreModel, SoftDeletableModel):
     Represents a core photography service (e.g. Newborn, Maternity, Wedding, Portrait).
     """
 
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="services",
+        help_text=_("The organization this service belongs to"),
+        null=True,
+    )
     name = models.CharField(
         _("service name"),
         max_length=255,
-        unique=True,
         help_text=_("e.g. Newborn Baby Shoot, Maternity Photoshoot"),
     )
     slug = models.SlugField(
         _("slug"),
         max_length=255,
-        unique=True,
         help_text=_("URL-friendly slug for service identification"),
     )
     description = models.TextField(
@@ -75,6 +80,18 @@ class PhotographyService(CoreModel, SoftDeletableModel):
         verbose_name = _("photography service")
         verbose_name_plural = _("photography services")
         ordering = ["sort_order", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "name"],
+                condition=models.Q(is_deleted=False),
+                name="unique_org_service_name"
+            ),
+            models.UniqueConstraint(
+                fields=["organization", "slug"],
+                condition=models.Q(is_deleted=False),
+                name="unique_org_service_slug"
+            ),
+        ]
         indexes = [
             models.Index(fields=["is_active", "sort_order"]),
         ]

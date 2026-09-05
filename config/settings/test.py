@@ -30,3 +30,12 @@ CHANNEL_LAYERS = {
     }
 }
 
+META_APP_ID = "test-app"
+META_APP_SECRET = "test-meta-secret"
+META_VERIFY_TOKEN = "test-verify-token"
+INSTAGRAM_ACCESS_TOKEN = ""
+WHATSAPP_ACCESS_TOKEN = ""
+WHATSAPP_PHONE_NUMBER_ID = ""
+EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+CELERY_BROKER_URL = "memory://"
+CELERY_RESULT_BACKEND = "cache+memory://"

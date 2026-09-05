@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive tests for Scheduling and Dynamic Availability Engine.
 Covers business hours, multiple periods / breaks, buffers, service durations,
@@ -34,7 +35,7 @@ def future_monday():
 
 @pytest.fixture
 def portrait_service():
-    return PhotographyService.objects.create(
+    return PhotographyService.objects.create(organization=test_workspace(),
         name="Studio Portrait Session",
         duration_minutes=60,
         buffer_before_minutes=0,
@@ -45,7 +46,7 @@ def portrait_service():
 
 @pytest.fixture
 def buffered_service():
-    return PhotographyService.objects.create(
+    return PhotographyService.objects.create(organization=test_workspace(),
         name="Newborn Luxury Session",
         duration_minutes=60,
         buffer_before_minutes=15,
@@ -58,7 +59,7 @@ def buffered_service():
 class TestAvailabilityEngine:
     def test_normal_day_availability(self, portrait_service, future_monday):
         """Standard business hours 09:00 - 13:00 produces exact hourly slots."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,  # Monday
             start_time=time(9, 0),
             end_time=time(13, 0),
@@ -78,12 +79,12 @@ class TestAvailabilityEngine:
 
     def test_closed_day_and_holiday_closure(self, portrait_service, future_monday):
         """HolidayClosure overrides weekly hours and marks the studio as completely closed."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(17, 0),
         )
-        HolidayClosure.objects.create(
+        HolidayClosure.objects.create(organization=test_workspace(),
             date=future_monday,
             name="Studio Maintenance Day",
         )
@@ -96,12 +97,12 @@ class TestAvailabilityEngine:
 
     def test_mid_day_break_multiple_periods(self, portrait_service, future_monday):
         """Multiple operating periods (09:00-13:00, 14:00-18:00) respects 13:00-14:00 lunch break."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(13, 0),
         )
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(14, 0),
             end_time=time(18, 0),
@@ -121,7 +122,7 @@ class TestAvailabilityEngine:
 
     def test_blocked_period_generic_and_service_specific(self, portrait_service, buffered_service, future_monday, studio_tz):
         """Blocked periods eliminate overlapping slots for all or specific services."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(17, 0),
@@ -130,7 +131,7 @@ class TestAvailabilityEngine:
         # Block 11:00 to 13:00 specifically for portrait_service
         block_start = timezone.make_aware(datetime.combine(future_monday, time(11, 0)), studio_tz)
         block_end = timezone.make_aware(datetime.combine(future_monday, time(13, 0)), studio_tz)
-        BlockedPeriod.objects.create(
+        BlockedPeriod.objects.create(organization=test_workspace(),
             starts_at=block_start,
             ends_at=block_end,
             reason="Special VIP Session",
@@ -158,12 +159,12 @@ class TestAvailabilityEngine:
 
     def test_existing_booking_collision_with_buffers(self, buffered_service, future_monday, studio_tz):
         """Booking with preparation and cleanup buffers blocks adjacent candidate slots."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(17, 0),
         )
-        customer = Customer.objects.create(display_name="Ananya Panday")
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Ananya Panday")
 
         # Booking at 11:00 - 12:00 with 15m before and 15m after buffer
         booking_start = timezone.make_aware(datetime.combine(future_monday, time(11, 0)), studio_tz)
@@ -192,7 +193,7 @@ class TestAvailabilityEngine:
 
     def test_package_duration_override(self, portrait_service, future_monday):
         """Package duration override alters available slot lengths."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(13, 0),
@@ -219,13 +220,13 @@ class TestAvailabilityEngine:
     def test_special_availability_override(self, portrait_service, future_monday):
         """SpecialAvailability overrides regular weekly hours for a specific date."""
         # Regular weekly hours: 09:00 - 12:00
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(12, 0),
         )
         # Special hours on this specific date: 15:00 - 19:00
-        SpecialAvailability.objects.create(
+        SpecialAvailability.objects.create(organization=test_workspace(),
             date=future_monday,
             start_time=time(15, 0),
             end_time=time(19, 0),
@@ -246,7 +247,7 @@ class TestAvailabilityEngine:
 
     def test_range_availability_calculation(self, portrait_service, future_monday):
         """Range availability returns grouped days with metadata."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(9, 0),
             end_time=time(12, 0),
@@ -270,7 +271,7 @@ class TestAvailabilityEngine:
 class TestSchedulingAPI:
     def test_public_availability_endpoint(self, api_client, portrait_service, future_monday):
         """Public advisory availability endpoint returns slot list without authentication."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(10, 0),
             end_time=time(14, 0),
@@ -287,7 +288,7 @@ class TestSchedulingAPI:
 
     def test_public_range_availability_endpoint(self, api_client, portrait_service, future_monday):
         """Public endpoint supports date ranges."""
-        WeeklyAvailability.objects.create(
+        WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=0,
             start_time=time(10, 0),
             end_time=time(14, 0),

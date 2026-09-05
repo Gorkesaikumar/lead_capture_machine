@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for PhotographyService and Package models, validations, safe deletion, and APIs.
 """
@@ -16,7 +17,7 @@ from apps.services.services import PhotographyServiceManager
 class TestServiceAndPackageModels:
     def test_service_creation_and_slot_duration(self):
         """Total slot duration accurately sums session time and setup/cleanup buffers."""
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Cake Smash Photoshoot",
             duration_minutes=60,
             buffer_before_minutes=15,
@@ -28,7 +29,7 @@ class TestServiceAndPackageModels:
 
     def test_package_effective_duration(self):
         """Package uses duration override when set, otherwise falls back to parent service duration."""
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Graduation Shoot",
             duration_minutes=45,
             base_price=Decimal("3000.00"),
@@ -51,7 +52,7 @@ class TestServiceAndPackageModels:
 
     def test_package_duplicate_name_within_service_rejected(self):
         """UniqueConstraint prevents duplicate package names under the same service."""
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Family Portrait",
             duration_minutes=60,
             base_price=Decimal("4000.00"),
@@ -70,7 +71,7 @@ class TestServiceAndPackageModels:
 
     def test_safe_deletion_with_historical_dependencies(self):
         """Services with linked leads/packages are safely deactivated and soft-deleted."""
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Maternity Shoot",
             duration_minutes=60,
             base_price=Decimal("7000.00"),
@@ -80,8 +81,8 @@ class TestServiceAndPackageModels:
             name="Silver",
             price=Decimal("7000.00"),
         )
-        customer = Customer.objects.create(display_name="Kriti Sanon")
-        Lead.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Kriti Sanon")
+        create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             service=service,
@@ -145,7 +146,7 @@ class TestServicesAndPackagesAPI:
 
     def test_package_crud_lifecycle(self, authenticated_client):
         """Admin can manage packages with inclusions and duration overrides."""
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Fashion Portfolio",
             duration_minutes=90,
             base_price=Decimal("10000.00"),

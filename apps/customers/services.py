@@ -22,6 +22,7 @@ class CustomerResolutionService:
         cls,
         channel: str,
         external_user_id: str,
+        organization: "Organization",
         metadata: Optional[Dict[str, Any]] = None,
         display_name: Optional[str] = None,
         phone_number: Optional[str] = None,
@@ -36,7 +37,7 @@ class CustomerResolutionService:
         Returns:
             Tuple[Customer, bool]: (Customer instance, created boolean)
         """
-        if not channel or not external_user_id:
+        if not organization or not channel or not external_user_id:
             raise ValueError("Channel and external_user_id are required for customer resolution.")
 
         channel = channel.upper().strip()
@@ -47,7 +48,7 @@ class CustomerResolutionService:
         # 1. Fast path: check if identity already exists
         existing_identity = (
             CustomerIdentity.objects.select_related("customer")
-            .filter(channel=channel, external_user_id=external_user_id)
+            .filter(organization=organization, channel=channel, external_user_id=external_user_id)
             .first()
         )
 
@@ -81,17 +82,6 @@ class CustomerResolutionService:
 
         # 2. Slow path: Create new Customer and CustomerIdentity atomically with race condition handling
         try:
-            # Dynamically fetch profile for Instagram if missing
-            if channel == "INSTAGRAM" and not display_name and not username:
-                try:
-                    from apps.integrations.meta.instagram.provider import InstagramMessagingProvider
-                    profile = InstagramMessagingProvider().get_user_profile(external_user_id)
-                    if profile:
-                        display_name = profile.get("name", display_name)
-                        username = profile.get("username", username)
-                except Exception as e:
-                    logger.warning("Could not fetch Instagram profile for %s: %s", external_user_id, e)
-
             with transaction.atomic():
                 # Derive initial display name if not explicitly provided
                 if display_name:
@@ -109,6 +99,7 @@ class CustomerResolutionService:
                 normalized_phone = phone_number or ("+" + external_user_id if channel == "WHATSAPP" else "")
 
                 customer = Customer.objects.create(
+                    organization=organization,
                     display_name=derived_display_name,
                     primary_phone=normalized_phone,
                     first_seen_at=now,
@@ -141,7 +132,7 @@ class CustomerResolutionService:
             )
             resolved_identity = (
                 CustomerIdentity.objects.select_related("customer")
-                .filter(channel=channel, external_user_id=external_user_id)
+                .filter(organization=organization, channel=channel, external_user_id=external_user_id)
                 .first()
             )
             if resolved_identity:
@@ -220,3 +211,74 @@ class CustomerResolutionService:
 
         if identity_updated:
             identity.save(update_fields=["username", "normalized_phone", "metadata", "updated_at"])
+
+    @classmethod
+    def resolve_direct_customer(
+        cls,
+        organization: "Organization",
+        display_name: str,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
+    ) -> Tuple[Customer, bool]:
+        """
+        Resolves a Customer from a direct entry (Manual or Website).
+        Performs deduplication against existing customers in the same organization
+        based on email or phone_number.
+        """
+        now = timezone.now()
+
+        # Normalize inputs
+        phone_number = phone_number.strip() if phone_number else None
+        if phone_number and not phone_number.startswith("+"):
+            phone_number = f"+{phone_number}"
+
+        email = email.lower().strip() if email else None
+
+        existing_customer = None
+
+        # 1. Deduplicate by Email
+        if email:
+            existing_customer = Customer.objects.filter(
+                organization=organization,
+                email=email,
+                is_deleted=False
+            ).first()
+
+        # 2. Deduplicate by Phone (if email not found or not provided)
+        if not existing_customer and phone_number:
+            existing_customer = Customer.objects.filter(
+                organization=organization,
+                primary_phone=phone_number,
+                is_deleted=False
+            ).first()
+
+        if existing_customer:
+            # Update missing info if possible
+            updated = False
+            if email and not existing_customer.email:
+                existing_customer.email = email
+                updated = True
+            if phone_number and not existing_customer.primary_phone:
+                existing_customer.primary_phone = phone_number
+                updated = True
+
+            existing_customer.last_seen_at = now
+            update_fields = ["last_seen_at", "updated_at"]
+            if updated:
+                if email: update_fields.append("email")
+                if phone_number: update_fields.append("primary_phone")
+
+            existing_customer.save(update_fields=update_fields)
+            return existing_customer, False
+
+        # 3. Create new Customer
+        customer = Customer.objects.create(
+            organization=organization,
+            display_name=display_name or "Unknown Customer",
+            primary_phone=phone_number or "",
+            email=email or "",
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+
+        return customer, True

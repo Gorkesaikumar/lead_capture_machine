@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Audit Logging System:
 - Model immutability (append-only enforcement, deletion prevention)
@@ -30,11 +31,13 @@ from apps.services.models import Package, PhotographyService
 
 @pytest.fixture
 def admin_user(db):
-    return User.objects.create_superuser(
+    user = User.objects.create_superuser(
         email="admin_audit@example.com",
         password="SecureAdminPassword123!",
         full_name="Audit Administrator",
     )
+    add_member(user)
+    return user
 
 
 @pytest.fixture
@@ -56,7 +59,7 @@ def auth_client(admin_user):
 
 @pytest.fixture
 def test_customer(db):
-    customer = Customer.objects.create(
+    customer = Customer.objects.create(organization=test_workspace(),
         display_name="Audit Test Client",
         primary_phone="+15551234567",
     )
@@ -71,7 +74,7 @@ def test_customer(db):
 
 @pytest.fixture
 def photography_service(db):
-    service = PhotographyService.objects.create(
+    service = PhotographyService.objects.create(organization=test_workspace(),
         name="Portrait Session",
         slug="portrait-session-audit",
         description="Standard studio portrait",
@@ -81,7 +84,7 @@ def photography_service(db):
         base_price=Decimal("150.00"),
         is_active=True,
     )
-    WeeklyAvailability.objects.create(
+    WeeklyAvailability.objects.create(organization=test_workspace(),
         weekday=0,  # Monday
         start_time=time(9, 0),
         end_time=time(17, 0),
@@ -92,7 +95,7 @@ def photography_service(db):
 
 @pytest.fixture
 def test_lead(db, test_customer, photography_service):
-    return Lead.objects.create(
+    return create_lead(
         customer=test_customer,
         source_channel="WHATSAPP",
         service=photography_service,
@@ -108,7 +111,7 @@ def test_lead(db, test_customer, photography_service):
 class TestAuditModelImmutability:
 
     def test_audit_event_creation_succeeds(self, admin_user):
-        event = AuditEvent.objects.create(
+        event = AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.USER_LOGIN,
             entity_type="User",
@@ -121,7 +124,7 @@ class TestAuditModelImmutability:
         assert event.actor == admin_user
 
     def test_audit_event_update_raises_permission_error(self, admin_user):
-        event = AuditEvent.objects.create(
+        event = AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.USER_LOGIN,
             entity_type="User",
@@ -132,7 +135,7 @@ class TestAuditModelImmutability:
             event.save()
 
     def test_audit_event_delete_raises_permission_error(self, admin_user):
-        event = AuditEvent.objects.create(
+        event = AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.USER_LOGIN,
             entity_type="User",
@@ -142,7 +145,7 @@ class TestAuditModelImmutability:
             event.delete()
 
     def test_audit_queryset_bulk_update_raises_permission_error(self, admin_user):
-        AuditEvent.objects.create(
+        AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.USER_LOGIN,
             entity_type="User",
@@ -152,7 +155,7 @@ class TestAuditModelImmutability:
             AuditEvent.objects.all().update(action=AuditEvent.Action.USER_LOGOUT)
 
     def test_audit_queryset_bulk_delete_raises_permission_error(self, admin_user):
-        AuditEvent.objects.create(
+        AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.USER_LOGIN,
             entity_type="User",
@@ -443,14 +446,14 @@ class TestAuditAPI:
 
     def test_list_audit_events(self, auth_client, admin_user):
         # Create some audit events
-        AuditEvent.objects.create(
+        AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.BOOKING_CREATED,
             entity_type="Booking",
             entity_id="test-booking-uuid",
             metadata={"notes": "First booking"},
         )
-        AuditEvent.objects.create(
+        AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.LEAD_STATUS_CHANGED,
             entity_type="Lead",
@@ -464,13 +467,13 @@ class TestAuditAPI:
         assert res.data["count"] >= 2
 
     def test_filter_by_action_and_entity_type(self, auth_client, admin_user):
-        AuditEvent.objects.create(
+        AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.BOOKING_CREATED,
             entity_type="Booking",
             entity_id="booking-filter-id",
         )
-        AuditEvent.objects.create(
+        AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.LEAD_STATUS_CHANGED,
             entity_type="Lead",
@@ -483,7 +486,7 @@ class TestAuditAPI:
         assert all(item["action"] == "BOOKING_CREATED" for item in res.data["results"])
 
     def test_retrieve_single_audit_event(self, auth_client, admin_user):
-        event = AuditEvent.objects.create(
+        event = AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.BOOKING_CREATED,
             entity_type="Booking",
@@ -498,7 +501,7 @@ class TestAuditAPI:
         assert res.data["actor"]["email"] == admin_user.email
 
     def test_non_get_methods_are_disallowed(self, auth_client, admin_user):
-        event = AuditEvent.objects.create(
+        event = AuditEvent.objects.create(organization=test_workspace(),
             actor=admin_user,
             action=AuditEvent.Action.BOOKING_CREATED,
             entity_type="Booking",
@@ -522,4 +525,3 @@ class TestAuditAPI:
         # DELETE is forbidden
         res_delete = auth_client.delete(detail_url)
         assert res_delete.status_code == status.HTTP_405_METHOD_NOT_ALLOWED
-

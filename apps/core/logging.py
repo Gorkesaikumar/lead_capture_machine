@@ -18,6 +18,7 @@ Design principles:
 import contextvars
 import json
 import logging
+import re
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -59,6 +60,9 @@ SENSITIVE_KEYS = frozenset({
     "signing_secret",
     "webhook_secret",
     "client_secret",
+    "code",
+    "state",
+    "registration_pin",
 })
 
 _MASK = "***REDACTED***"
@@ -94,6 +98,9 @@ class CorrelationIdFilter(logging.Filter):
     """
     def filter(self, record: logging.LogRecord) -> bool:
         record.correlation_id = get_correlation_id()
+        # Development HTTP request lines and HTTP library errors may contain OAuth queries.
+        record.msg = re.sub(r"(?i)([?&](?:code|state|access_token|input_token|client_secret|hub\.verify_token)=)[^&\s\"']+", r"\1[REDACTED]", record.getMessage())
+        record.args = ()
         return True
 
 

@@ -27,7 +27,7 @@ export function CustomersTable({ customers }: { customers: any[] }) {
               <TableRow 
                 key={cust.id} 
                 className="hover:bg-slate-50 cursor-pointer transition-colors"
-                onClick={() => navigate(`/customers/${cust.id}`)}
+                onClick={() => navigate(`/app/customers/${cust.id}`)}
               >
                 <TableCell className="py-4">
                   <div className="flex items-center gap-3">

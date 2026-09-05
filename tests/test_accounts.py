@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Custom User model and UserManager.
 """
@@ -21,7 +22,7 @@ class TestUserModelAndManager:
         assert user.email == "manager@v4studio.test"
         assert user.full_name == "Studio Admin"
         assert user.is_active is True
-        assert user.is_staff is True
+        assert user.is_staff is False
         assert user.is_superuser is False
         assert user.check_password("SecurePassword123!") is True
         assert str(user) == "Studio Admin <manager@v4studio.test>"

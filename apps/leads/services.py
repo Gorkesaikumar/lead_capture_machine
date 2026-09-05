@@ -1,9 +1,11 @@
+from django.db.models import Case, When
 """
 Lead detection and lifecycle management services.
 Evaluates configurable triggers on inbound messages and manages sales opportunities.
 """
 import logging
 import re
+import regex
 from typing import Any, Dict, Optional, Tuple
 from django.db import transaction
 from django.utils import timezone
@@ -75,7 +77,7 @@ class LeadDetectionService:
             .first()
         )
 
-        matched_trigger = cls._find_matching_trigger(raw_text=message.text, normalized_text=normalized_text)
+        matched_trigger = cls._find_matching_trigger(raw_text=message.text, normalized_text=normalized_text, organization=message.conversation.organization)
         if not matched_trigger:
             _log.debug(
                 PipelineStage.LEAD_DETECTION,
@@ -86,9 +88,9 @@ class LeadDetectionService:
                 # Still link conversation and record activity for active lead
                 with transaction.atomic():
                     updated_fields = ["updated_at"]
-                    if not active_lead.conversation and message.conversation:
-                        active_lead.conversation = message.conversation
-                        updated_fields.append("conversation")
+                    if not message.conversation.lead:
+                        message.conversation.lead = active_lead
+                        message.conversation.save(update_fields=["lead", "updated_at"])
                     active_lead.save(update_fields=updated_fields)
 
                     LeadActivity.objects.create(
@@ -117,11 +119,25 @@ class LeadDetectionService:
         if not active_lead:
             try:
                 with transaction.atomic():
+                    from apps.subscriptions.services import SubscriptionEntitlementService, QuotaExceededException
+                    try:
+                        SubscriptionEntitlementService.check_and_consume_lead_quota(
+                            organization=message.conversation.organization,
+                            channel=channel
+                        )
+                    except QuotaExceededException as quota_err:
+                        _log.warning(
+                            PipelineStage.LEAD_DETECTION,
+                            f"Lead creation blocked due to quota limit: {quota_err}",
+                            message_id=str(message.id),
+                        )
+                        return None, False, None
+
                     # Create new sales opportunity lead
                     new_lead = Lead.objects.create(
+                        organization=message.conversation.organization,
                         customer=customer,
                         source_channel=channel,
-                        conversation=message.conversation,
                         originating_message=message,
                         service=matched_trigger.service,
                         trigger=matched_trigger,
@@ -129,6 +145,9 @@ class LeadDetectionService:
                         priority=matched_trigger.priority,
                         summary=f"Inquiry for {matched_trigger.phrase}"[:255],
                     )
+
+                    message.conversation.lead = new_lead
+                    message.conversation.save(update_fields=["lead", "updated_at"])
 
                     LeadActivity.objects.create(
                         lead=new_lead,
@@ -206,12 +225,16 @@ class LeadDetectionService:
         return " ".join(cleaned.split())
 
     @classmethod
-    def _find_matching_trigger(cls, raw_text: str, normalized_text: str) -> Optional[LeadTrigger]:
+    def _find_matching_trigger(cls, raw_text: str, normalized_text: str, organization=None) -> Optional[LeadTrigger]:
         """Evaluates active triggers in descending priority order."""
         active_triggers = (
-            LeadTrigger.objects.filter(is_active=True)
+            LeadTrigger.objects.filter(is_active=True, organization=organization)
             .select_related("service")
-            .order_by("-priority", "phrase")
+            .order_by(
+                Case(
+                    *[When(priority=p, then=i) for i, p in enumerate(["URGENT", "HIGH", "MEDIUM", "LOW"])], default=4
+                ), "phrase"
+            )
         )
 
         for trigger in active_triggers:
@@ -235,10 +258,10 @@ class LeadDetectionService:
                     pass
             elif trigger.match_type == LeadTrigger.MatchType.REGEX:
                 try:
-                    if re.search(trigger.phrase, raw_text, re.IGNORECASE):
+                    if regex.search(trigger.phrase, raw_text[:4096], regex.IGNORECASE, timeout=0.025):
                         return trigger
-                except re.error:
-                    logger.error("Invalid regex in LeadTrigger id=%s phrase=%s", trigger.id, trigger.phrase)
+                except (regex.error, TimeoutError):
+                    logger.warning("Invalid or timed-out regex trigger id=%s", trigger.id)
 
         return None
 
@@ -363,3 +386,90 @@ class LeadManagementService:
                 description=note_text,
             )
         return activity
+
+    @classmethod
+    def create_direct_lead(
+        cls,
+        organization: "Organization",
+        source_channel: str,
+        customer_name: str,
+        phone_number: Optional[str] = None,
+        email: Optional[str] = None,
+        summary: str = "",
+        notes: str = "",
+        tags: Optional[list] = None,
+        source_identifier: str = "",
+        actor: Optional[User] = None,
+    ) -> Lead:
+        """
+        Creates a lead from a manual or website entry, resolving deduplication via CustomerResolutionService.
+        """
+        from apps.customers.services import CustomerResolutionService
+
+        with transaction.atomic():
+            from apps.organizations.models import Organization
+            Organization.objects.select_for_update().get(pk=organization.pk)
+            customer, created = CustomerResolutionService.resolve_direct_customer(
+                organization=organization,
+                display_name=customer_name,
+                phone_number=phone_number,
+                email=email
+            )
+
+            # Check if an active lead already exists for this customer
+            active_lead = Lead.objects.filter(
+                organization=organization,
+                customer=customer,
+                status__in=Lead.ACTIVE_STATUSES,
+                is_deleted=False
+            ).first()
+
+            if active_lead:
+                if notes:
+                    existing_notes = active_lead.notes or ""
+                    active_lead.notes = f"{existing_notes}\n\n[{source_channel} Submission]: {notes}".strip()
+                    active_lead.save(update_fields=["notes", "updated_at"])
+
+                LeadActivity.objects.create(
+                    lead=active_lead,
+                    activity_type=LeadActivity.ActivityType.NOTE_ADDED,
+                    actor=actor,
+                    description=f"Additional inquiry submitted via {source_channel}",
+                    metadata={"summary": summary, "source_identifier": source_identifier}
+                )
+
+                broadcast_lead_updated(active_lead)
+                logger.info("Updated existing active lead id=%s for customer id=%s", active_lead.id, customer.id)
+                return active_lead
+
+            # Enforce lead quota limit for direct / website form submissions
+            from apps.subscriptions.services import SubscriptionEntitlementService
+            SubscriptionEntitlementService.check_and_consume_lead_quota(
+                organization=organization,
+                channel=source_channel
+            )
+
+            lead = Lead.objects.create(
+                organization=organization,
+                customer=customer,
+                source_channel=source_channel,
+                summary=summary,
+                notes=notes,
+                tags=tags or [],
+                source_identifier=source_identifier,
+                status=Lead.Status.NEW,
+                priority=Lead.Priority.MEDIUM,
+                assigned_staff=actor if actor else None
+            )
+
+            LeadActivity.objects.create(
+                lead=lead,
+                activity_type=LeadActivity.ActivityType.LEAD_CREATED,
+                actor=actor,
+                description=f"Lead created directly via {source_channel}",
+                metadata={"created_customer": created}
+            )
+
+            broadcast_lead_updated(lead)
+            logger.info("Created direct lead id=%s for customer id=%s", lead.id, customer.id)
+            return lead

@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Lead domain models, LeadDetectionService, deduplication, lifecycle activities, and APIs.
 """
@@ -17,7 +18,7 @@ from apps.services.models import PhotographyService
 class TestLeadDetectionAndServices:
     @pytest.fixture
     def baby_shoot_service(self):
-        return PhotographyService.objects.create(
+        return PhotographyService.objects.create(organization=test_workspace(),
             name="Newborn Baby Shoot",
             slug="newborn-baby-shoot",
             base_price=5000.00,
@@ -26,20 +27,20 @@ class TestLeadDetectionAndServices:
 
     @pytest.fixture
     def active_triggers(self, baby_shoot_service):
-        t1 = LeadTrigger.objects.create(
+        t1 = LeadTrigger.objects.create(organization=test_workspace(),
             phrase="baby shoot",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=baby_shoot_service,
             priority=Lead.Priority.HIGH,
             is_active=True,
         )
-        t2 = LeadTrigger.objects.create(
+        t2 = LeadTrigger.objects.create(organization=test_workspace(),
             phrase="book appointment",
             match_type=LeadTrigger.MatchType.CONTAINS,
             priority=Lead.Priority.URGENT,
             is_active=True,
         )
-        t3 = LeadTrigger.objects.create(
+        t3 = LeadTrigger.objects.create(organization=test_workspace(),
             phrase=r"price|cost|rate",
             match_type=LeadTrigger.MatchType.REGEX,
             priority=Lead.Priority.MEDIUM,
@@ -56,7 +57,7 @@ class TestLeadDetectionAndServices:
             "text": "Hello, I want to inquire about a baby shoot for next week!",
             "username": "meera_sharma",
             "display_name": "Meera Sharma",
-        })
+        }, organization=test_workspace())
 
         lead, created, trigger = LeadDetectionService.process_inbound_message(msg)
 
@@ -71,7 +72,7 @@ class TestLeadDetectionAndServices:
 
     def test_exact_trigger_creates_lead(self):
         """Exact match trigger matches whole normalized string."""
-        trigger = LeadTrigger.objects.create(
+        trigger = LeadTrigger.objects.create(organization=test_workspace(),
             phrase="portfolio shoot",
             match_type=LeadTrigger.MatchType.EXACT,
             priority=Lead.Priority.URGENT,
@@ -83,7 +84,7 @@ class TestLeadDetectionAndServices:
             "external_message_id": "wa_exact_01",
             "text": "Portfolio Shoot",
             "display_name": "Kabir Bedi",
-        })
+        }, organization=test_workspace())
         lead, created, matched_trigger = LeadDetectionService.process_inbound_message(msg)
         assert created is True
         assert matched_trigger.id == trigger.id
@@ -97,7 +98,7 @@ class TestLeadDetectionAndServices:
             "external_message_id": "ig_regex_msg_01",
             "text": "What is the hourly rate for a shoot?",
             "display_name": "Ananya Roy",
-        })
+        }, organization=test_workspace())
         lead, created, matched_trigger = LeadDetectionService.process_inbound_message(msg)
         assert created is True
         assert matched_trigger.match_type == LeadTrigger.MatchType.REGEX
@@ -109,7 +110,7 @@ class TestLeadDetectionAndServices:
             "external_user_id": "919876543211",
             "external_message_id": "wa_msg_nomatch",
             "text": "Good morning, thank you for the wonderful pictures!",
-        })
+        }, organization=test_workspace())
 
         lead, created, trigger = LeadDetectionService.process_inbound_message(msg)
 
@@ -120,7 +121,7 @@ class TestLeadDetectionAndServices:
 
     def test_inactive_trigger_ignored(self, baby_shoot_service):
         """Inactive triggers are ignored during intent evaluation."""
-        LeadTrigger.objects.create(
+        LeadTrigger.objects.create(organization=test_workspace(),
             phrase="wedding photography",
             match_type=LeadTrigger.MatchType.CONTAINS,
             service=baby_shoot_service,
@@ -132,7 +133,7 @@ class TestLeadDetectionAndServices:
             "external_user_id": "ig_inactive_test",
             "external_message_id": "ig_msg_inactive",
             "text": "Looking for wedding photography",
-        })
+        }, organization=test_workspace())
 
         lead, created, _ = LeadDetectionService.process_inbound_message(msg)
         assert lead is None
@@ -152,7 +153,7 @@ class TestLeadDetectionAndServices:
             "external_message_id": "wa_seq_01",
             "text": "Hi, I am interested in a baby shoot",
             "display_name": "Rani Mukherjee",
-        })
+        }, organization=test_workspace())
         lead1, created1, _ = LeadDetectionService.process_inbound_message(msg1)
         assert created1 is True
         assert Lead.objects.count() == 1
@@ -163,7 +164,7 @@ class TestLeadDetectionAndServices:
             "external_user_id": "919876543299",
             "external_message_id": "wa_seq_02",
             "text": "what is the price?",
-        })
+        }, organization=test_workspace())
         lead2, created2, _ = LeadDetectionService.process_inbound_message(msg2)
         assert created2 is False
         assert lead1.id == lead2.id
@@ -175,7 +176,7 @@ class TestLeadDetectionAndServices:
             "external_user_id": "919876543299",
             "external_message_id": "wa_seq_03",
             "text": "can I book appointment?",
-        })
+        }, organization=test_workspace())
         lead3, created3, _ = LeadDetectionService.process_inbound_message(msg3)
         assert created3 is False
         assert lead1.id == lead3.id
@@ -196,13 +197,13 @@ class TestLeadDetectionAndServices:
             "external_message_id": "ig_msg_term_1",
             "text": "baby shoot",
             "display_name": "Siddharth Roy",
-        })
+        }, organization=test_workspace())
         lead1, created1, _ = LeadDetectionService.process_inbound_message(msg1)
         assert created1 is True
 
         # Close first lead
-        LeadManagementService.update_status(lead1, Lead.Status.COMPLETED)
-        assert lead1.status == Lead.Status.COMPLETED
+        LeadManagementService.update_status(lead1, Lead.Status.CONVERTED)
+        assert lead1.status == Lead.Status.CONVERTED
         assert lead1.closed_at is not None
 
         # Customer sends inquiry months later
@@ -211,7 +212,7 @@ class TestLeadDetectionAndServices:
             "external_user_id": "ig_cust_terminal",
             "external_message_id": "ig_msg_term_2",
             "text": "baby shoot for 1st birthday",
-        })
+        }, organization=test_workspace())
         lead2, created2, _ = LeadDetectionService.process_inbound_message(msg2)
         assert created2 is True
         assert lead2.id != lead1.id
@@ -222,17 +223,17 @@ class TestLeadDetectionAndServices:
 class TestLeadAPI:
     @pytest.fixture
     def sample_lead(self, admin_user):
-        customer = Customer.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(),
             display_name="Tara Sutaria",
             primary_phone="+919777666555",
             email="tara@example.com",
         )
-        service = PhotographyService.objects.create(
+        service = PhotographyService.objects.create(organization=test_workspace(),
             name="Maternity Shoot",
             slug="maternity-shoot",
             base_price=8000.00,
         )
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=customer,
             source_channel="INSTAGRAM",
             service=service,
@@ -335,3 +336,37 @@ class TestLeadAPI:
     def test_unauthenticated_leads_rejected(self, api_client):
         """Unauthenticated requests are rejected with 401."""
         assert api_client.get("/api/v1/leads/").status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_lead_duplicate_detection_by_phone(self, authenticated_client, sample_lead):
+        """Creating a new lead manually with the same phone number should flag it or use existing customer."""
+        url = "/api/v1/leads/"
+        resp = authenticated_client.post(
+            url,
+            data={
+                "customer_name": "Tara Sutaria 2",
+                "phone_number": "+919777666555",
+                "source_channel": "MANUAL",
+                "notes": "Follow up call"
+            },
+            format="json",
+        )
+        # Even if creating a new lead is allowed, the customer resolution must link to the same customer ID
+        assert resp.status_code == status.HTTP_201_CREATED
+        new_lead_id = resp.json()["id"]
+        new_lead = Lead.objects.get(id=new_lead_id)
+
+        # Customer should be the exact same DB object (resolved by phone)
+        assert new_lead.customer.id == sample_lead.customer.id
+
+    def test_lead_tagging(self, authenticated_client, sample_lead):
+        """Admin can add tags to a lead."""
+        url = f"/api/v1/leads/{sample_lead.id}/"
+        resp = authenticated_client.patch(
+            url,
+            data={"tags": ["VIP", "URGENT"]},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        sample_lead.refresh_from_db()
+        assert "VIP" in sample_lead.tags
+        assert "URGENT" in sample_lead.tags

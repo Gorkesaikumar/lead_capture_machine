@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 from django.test import TransactionTestCase
 from django.db import connection
 from apps.customers.models import Customer
@@ -7,7 +8,7 @@ import threading
 
 class ConversationUnreadCountIdempotencyTest(TransactionTestCase):
     def setUp(self):
-        self.customer = Customer.objects.create(
+        self.customer = Customer.objects.create(organization=test_workspace(),
             display_name="Test Customer",
             email="test@customer.com",
             primary_phone="+1234567890",
@@ -24,7 +25,7 @@ class ConversationUnreadCountIdempotencyTest(TransactionTestCase):
 
     def test_new_message_increments_unread_count(self):
         """A newly inserted inbound message should increment unread_count exactly once."""
-        msg, created = ConversationService.store_inbound_message(self.payload)
+        msg, created = ConversationService.store_inbound_message(self.payload, organization=test_workspace())
         self.assertTrue(created)
         
         conversation = msg.conversation
@@ -33,12 +34,12 @@ class ConversationUnreadCountIdempotencyTest(TransactionTestCase):
     def test_duplicate_message_id_does_not_increment_unread_count(self):
         """A duplicate external_message_id must not increment unread_count."""
         # First delivery
-        msg1, created1 = ConversationService.store_inbound_message(self.payload)
+        msg1, created1 = ConversationService.store_inbound_message(self.payload, organization=test_workspace())
         self.assertTrue(created1)
         self.assertEqual(msg1.conversation.unread_count, 1)
 
         # Duplicate delivery
-        msg2, created2 = ConversationService.store_inbound_message(self.payload)
+        msg2, created2 = ConversationService.store_inbound_message(self.payload, organization=test_workspace())
         self.assertFalse(created2)
         self.assertEqual(msg1.id, msg2.id)
         
@@ -56,7 +57,7 @@ class ConversationUnreadCountIdempotencyTest(TransactionTestCase):
 
         def worker():
             try:
-                msg, created = ConversationService.store_inbound_message(self.payload)
+                msg, created = ConversationService.store_inbound_message(self.payload, organization=test_workspace())
                 results.append(created)
             except Exception as e:
                 exceptions.append(e)

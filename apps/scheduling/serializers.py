@@ -55,6 +55,12 @@ class SpecialAvailabilitySerializer(serializers.ModelSerializer):
 
 
 class BlockedPeriodSerializer(serializers.ModelSerializer):
+    def validate_service(self, value):
+        request = self.context.get("request")
+        if value and request and value.organization_id != request.organization.id:
+            raise serializers.ValidationError("Service not found in this workspace.")
+        return value
+
     service_name = serializers.CharField(source="service.name", read_only=True)
 
     class Meta:

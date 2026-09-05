@@ -7,6 +7,15 @@ from rest_framework.test import APIClient
 from apps.accounts.models import User
 
 
+@pytest.fixture(autouse=True)
+def isolate_cache_between_tests():
+    # Django database rollback does not reset Redis/locmem throttle and OAuth state.
+    from django.core.cache import cache
+    cache.clear()
+    yield
+    cache.clear()
+
+
 @pytest.fixture
 def api_client():
     """Returns an unauthenticated DRF APIClient."""
@@ -16,11 +25,15 @@ def api_client():
 @pytest.fixture
 def admin_user(db):
     """Creates and returns an active Studio Admin user."""
-    return User.objects.create_superuser(
+    user = User.objects.create_superuser(
         email="admin@v4studio.test",
         full_name="Lead Studio Administrator",
         password="TestAdminPassword123!",
     )
+
+    from tests.tenant_fixtures import add_member
+    add_member(user)
+    return user
 
 
 @pytest.fixture

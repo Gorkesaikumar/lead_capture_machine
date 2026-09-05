@@ -30,9 +30,9 @@ class AvailabilityService:
     """
 
     @classmethod
-    def get_studio_timezone(cls) -> ZoneInfo:
+    def get_studio_timezone(cls, organization=None) -> ZoneInfo:
         """Returns the studio's configured zoneinfo timezone."""
-        tz_name = getattr(settings, "TIME_ZONE", "UTC")
+        tz_name = getattr(organization, "timezone", None) or getattr(settings, "TIME_ZONE", "UTC")
         return ZoneInfo(tz_name)
 
     @classmethod
@@ -46,11 +46,11 @@ class AvailabilityService:
         """
         Computes all valid appointment start times for a given service on a single date.
         """
-        studio_tz = cls.get_studio_timezone()
+        studio_tz = cls.get_studio_timezone(service.organization)
         now_dt = timezone.now().astimezone(studio_tz)
 
         # 1. Check Holiday / Studio Closure
-        if HolidayClosure.objects.filter(date=target_date, is_active=True).exists():
+        if HolidayClosure.objects.filter(organization=service.organization, date=target_date, is_active=True).exists():
             logger.debug("Studio closed on %s due to holiday closure", target_date)
             return []
 
@@ -64,7 +64,7 @@ class AvailabilityService:
         buffer_after_delta = timedelta(minutes=buffer_after)
 
         # 3. Determine Operating Windows for the Target Date
-        special_availabilities = SpecialAvailability.objects.filter(
+        special_availabilities = SpecialAvailability.objects.filter(organization=service.organization,
             date=target_date, is_active=True
         ).order_by("start_time")
 
@@ -73,7 +73,7 @@ class AvailabilityService:
                 (spec.start_time, spec.end_time) for spec in special_availabilities
             ]
         else:
-            weekly_availabilities = WeeklyAvailability.objects.filter(
+            weekly_availabilities = WeeklyAvailability.objects.filter(organization=service.organization,
                 weekday=target_date.weekday(), is_active=True
             ).order_by("start_time")
             operating_windows = [
@@ -89,7 +89,7 @@ class AvailabilityService:
         day_end_dt = timezone.make_aware(datetime.combine(target_date, time.max), studio_tz)
 
         # Query busy intervals from BlockedPeriod
-        blocked_qs = BlockedPeriod.objects.filter(
+        blocked_qs = BlockedPeriod.objects.filter(organization=service.organization,
             is_active=True,
             starts_at__lt=day_end_dt + timedelta(hours=6),
             ends_at__gt=day_start_dt - timedelta(hours=6),
@@ -98,7 +98,7 @@ class AvailabilityService:
         busy_intervals = [(b.starts_at, b.ends_at) for b in blocked_qs]
 
         # Query busy intervals from confirmed/reserved Bookings
-        booking_qs = Booking.objects.filter(
+        booking_qs = Booking.objects.filter(customer__organization=service.organization,
             is_deleted=False,
             status__in=[Booking.Status.CONFIRMED, Booking.Status.PENDING],
             starts_at__lt=day_end_dt + timedelta(hours=6),
@@ -165,7 +165,7 @@ class AvailabilityService:
         if end_date < start_date:
             raise ValueError("End date must be on or after start date.")
 
-        studio_tz = cls.get_studio_timezone()
+        studio_tz = cls.get_studio_timezone(service.organization)
         results = []
         current_date = start_date
 

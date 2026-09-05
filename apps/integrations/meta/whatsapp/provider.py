@@ -26,7 +26,9 @@ class WhatsAppMessagingProvider(MessagingProvider):
         phone_number_id: Optional[str] = None,
         access_token: Optional[str] = None,
         client: Optional[MetaGraphClient] = None,
+        organization=None,
     ):
+        self.organization = organization
         self._phone_number_id = phone_number_id or getattr(settings, "WHATSAPP_PHONE_NUMBER_ID", "")
         self._access_token = access_token or getattr(settings, "WHATSAPP_ACCESS_TOKEN", "")
         self.client = client or MetaGraphClient(access_token=self._access_token)
@@ -44,7 +46,7 @@ class WhatsAppMessagingProvider(MessagingProvider):
         Determines whether free-form messaging is permitted under WhatsApp's
         24-hour Customer Service Window policy.
         """
-        return ConversationService.is_within_24h_window("WHATSAPP", str(recipient_id).strip())
+        return ConversationService.is_within_24h_window("WHATSAPP", str(recipient_id).strip(), organization=self.organization)
 
     def send_text_message(self, recipient_id: str, text: str) -> OutboundResult:
         """
@@ -205,7 +207,8 @@ class WhatsAppMessagingProvider(MessagingProvider):
             message_id = messages[0].get("id") if messages else None
             logger.info("Sent WhatsApp %s to %s (wamid=%s)", message_desc, recipient_id, message_id)
             return OutboundResult(
-                success=True,
+                success=bool(message_id),
+                error_message=None if message_id else "Meta returned no message ID; acceptance is unconfirmed.",
                 external_message_id=message_id,
                 provider_response=response,
             )

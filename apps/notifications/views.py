@@ -1,3 +1,4 @@
+from apps.organizations.permissions import IsOrganizationMember, IsOrganizationAdmin
 """
 Admin API views for monitoring and managing outbound notifications.
 """
@@ -18,11 +19,11 @@ class NotificationListView(generics.ListCreateAPIView):
     GET: List notifications with filtering by channel, status, type, and customer.
     POST: Ad-hoc creation and dispatch of a notification by studio admin.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
     serializer_class = NotificationSerializer
 
     def get_queryset(self):
-        qs = Notification.objects.select_related("customer").all()
+        qs = Notification.objects.select_related("customer").filter(customer__organization=self.request.organization)
         channel = self.request.query_params.get("channel")
         status_filter = self.request.query_params.get("status")
         notif_type = self.request.query_params.get("notification_type")
@@ -45,7 +46,7 @@ class NotificationListView(generics.ListCreateAPIView):
         data = serializer.validated_data
 
         try:
-            customer = Customer.objects.get(id=data["customer_id"])
+            customer = Customer.objects.get(id=data["customer_id"], organization=request.organization)
         except Customer.DoesNotExist:
             return Response({"detail": "Customer not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -67,20 +68,23 @@ class NotificationDetailView(generics.RetrieveAPIView):
     """
     GET: Retrieve detailed notification record by ID.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
     serializer_class = NotificationSerializer
     queryset = Notification.objects.select_related("customer").all()
+
+    def get_queryset(self):
+        return super().get_queryset().filter(customer__organization=self.request.organization)
 
 
 class NotificationRetryView(APIView):
     """
     POST: Manually trigger a retry for a failed notification.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsOrganizationMember]
 
     def post(self, request, pk, *args, **kwargs):
         try:
-            notification = Notification.objects.get(id=pk)
+            notification = Notification.objects.get(id=pk, customer__organization=request.organization)
         except Notification.DoesNotExist:
             return Response({"detail": "Notification not found."}, status=status.HTTP_404_NOT_FOUND)
 

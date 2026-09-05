@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Django Channels WebSocket authentication and consumer behavior.
 """
@@ -24,6 +25,7 @@ class ChannelsAuthTests(TransactionTestCase):
             is_staff=True,
             is_active=True,
         )
+        add_member(self.admin_user)
         self.admin_token, _ = Token.objects.get_or_create(user=self.admin_user)
 
         # Create Normal (Non-staff) user

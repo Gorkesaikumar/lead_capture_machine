@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Booking domain models, BookingLink lifecycle, ACID guarantees,
 REST APIs, and PostgreSQL ExclusionConstraint concurrency collision prevention.
@@ -30,16 +31,18 @@ User = get_user_model()
 
 @pytest.fixture
 def admin_user():
-    return User.objects.create_superuser(
+    user = User.objects.create_superuser(
         email="admin_booking@studio.com",
         password="SecureAdminPassword123!",
         full_name="Admin Booking",
     )
+    add_member(user)
+    return user
 
 
 @pytest.fixture
 def portrait_service():
-    return PhotographyService.objects.create(
+    return PhotographyService.objects.create(organization=test_workspace(),
         name="Portrait Studio Session",
         slug="portrait-studio-session",
         description="Professional studio portrait session",
@@ -56,7 +59,7 @@ def weekly_schedule():
     """Sets Monday-Friday 09:00 to 17:00 operating hours."""
     created = []
     for day in range(5):
-        w = WeeklyAvailability.objects.create(
+        w = WeeklyAvailability.objects.create(organization=test_workspace(),
             weekday=day,
             start_time=time(9, 0),
             end_time=time(17, 0),
@@ -68,12 +71,12 @@ def weekly_schedule():
 
 @pytest.fixture
 def customer_lead(portrait_service):
-    cust = Customer.objects.create(
+    cust = Customer.objects.create(organization=test_workspace(),
         display_name="Alice Customer",
         primary_phone="+15551234567",
         email="alice@example.com",
     )
-    lead = Lead.objects.create(
+    lead = create_lead(
         customer=cust,
         source_channel="INSTAGRAM",
         service=portrait_service,
@@ -102,11 +105,11 @@ class TestBookingLinkLifecycle:
 
         # Lead status transitioned
         lead.refresh_from_db()
-        assert lead.status == Lead.Status.BOOKING_LINK_SENT
+        assert lead.status == Lead.Status.QUALIFIED
 
         # Activity logged
         activity = LeadActivity.objects.filter(
-            lead=lead, activity_type=LeadActivity.ActivityType.BOOKING_LINK_SENT
+            lead=lead, activity_type=LeadActivity.ActivityType.NOTE_ADDED
         ).first()
         assert activity is not None
         assert activity.metadata["token"] == link.token
@@ -157,7 +160,7 @@ class TestBookingServiceACID:
         cust, lead = customer_lead
         link = BookingLinkService.create_for_lead(lead=lead, service=portrait_service, created_by=admin_user)
 
-        target_date = date(2026, 8, 10)  # Monday
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))  # Monday
         tz = AvailabilityService.get_studio_timezone()
         booking_start = timezone.make_aware(datetime.combine(target_date, time(10, 0)), tz)
 
@@ -185,7 +188,7 @@ class TestBookingServiceACID:
 
         # Lead is marked as BOOKED
         lead.refresh_from_db()
-        assert lead.status == Lead.Status.BOOKED
+        assert lead.status == Lead.Status.CONVERTED
         assert lead.closed_at is not None
 
         # Activity logged
@@ -199,7 +202,7 @@ class TestBookingServiceACID:
         cust, lead = customer_lead
         link = BookingLinkService.create_for_lead(lead=lead, service=portrait_service)
 
-        target_date = date(2026, 8, 10)  # Monday
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))  # Monday
         tz = AvailabilityService.get_studio_timezone()
         # Outside operating hours (07:00 when studio opens at 09:00)
         invalid_start = timezone.make_aware(datetime.combine(target_date, time(7, 0)), tz)
@@ -214,14 +217,14 @@ class TestBookingServiceACID:
         link.refresh_from_db()
         lead.refresh_from_db()
         assert link.is_used is False
-        assert lead.status == Lead.Status.BOOKING_LINK_SENT
+        assert lead.status == Lead.Status.QUALIFIED
         assert Booking.objects.count() == 0
 
     def test_booking_buffer_collision_rejected(self, mock_delay, admin_user, portrait_service, weekly_schedule, customer_lead):
         cust, lead = customer_lead
         link1 = BookingLinkService.create_for_lead(lead=lead, service=portrait_service)
 
-        target_date = date(2026, 8, 10)  # Monday
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))  # Monday
         tz = AvailabilityService.get_studio_timezone()
         booking1_start = timezone.make_aware(datetime.combine(target_date, time(10, 0)), tz)
 
@@ -232,8 +235,8 @@ class TestBookingServiceACID:
         )
 
         # Create second customer & lead
-        cust2 = Customer.objects.create(display_name="Bob Customer")
-        lead2 = Lead.objects.create(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
+        cust2 = Customer.objects.create(organization=test_workspace(), display_name="Bob Customer")
+        lead2 = create_lead(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
         link2 = BookingLinkService.create_for_lead(lead=lead2, service=portrait_service)
 
         # Attempt to book 11:00 to 12:00 (needs prep buffer 10:45, but Booking 1 cleanup is until 11:15)
@@ -251,7 +254,7 @@ class TestBookingServiceACID:
         cust, lead = customer_lead
         link1 = BookingLinkService.create_for_lead(lead=lead, service=portrait_service)
 
-        target_date = date(2026, 8, 10)  # Monday
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))  # Monday
         tz = AvailabilityService.get_studio_timezone()
         booking_start = timezone.make_aware(datetime.combine(target_date, time(10, 0)), tz)
 
@@ -268,8 +271,8 @@ class TestBookingServiceACID:
         assert booking.cancelled_at is not None
 
         # Now slot at 10:00 should be available again for a new customer
-        cust2 = Customer.objects.create(display_name="Bob Customer")
-        lead2 = Lead.objects.create(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
+        cust2 = Customer.objects.create(organization=test_workspace(), display_name="Bob Customer")
+        lead2 = create_lead(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
         link2 = BookingLinkService.create_for_lead(lead=lead2, service=portrait_service)
 
         booking2 = BookingService.create_booking(
@@ -301,7 +304,7 @@ class TestPublicAndAdminBookingAPIs:
         link = BookingLinkService.create_for_lead(lead=lead, service=portrait_service)
 
         client = APIClient()
-        response = client.get(f"/api/v1/bookings/links/{link.token}/availability/?date=2026-08-10")
+        response = client.get(f"/api/v1/bookings/links/{link.token}/availability/?date={(timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7)).isoformat()}")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["service_name"] == portrait_service.name
@@ -311,7 +314,7 @@ class TestPublicAndAdminBookingAPIs:
         cust, lead = customer_lead
         link = BookingLinkService.create_for_lead(lead=lead, service=portrait_service)
 
-        target_date = date(2026, 8, 10)
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))
         tz = AvailabilityService.get_studio_timezone()
         booking_start = timezone.make_aware(datetime.combine(target_date, time(10, 0)), tz)
 
@@ -336,7 +339,7 @@ class TestPublicAndAdminBookingAPIs:
         cust, lead = customer_lead
         link = BookingLinkService.create_for_lead(lead=lead, service=portrait_service)
 
-        target_date = date(2026, 8, 10)
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))
         tz = AvailabilityService.get_studio_timezone()
         booking_start = timezone.make_aware(datetime.combine(target_date, time(10, 0)), tz)
 
@@ -377,15 +380,15 @@ class TestBookingConcurrencyAndExclusionConstraint:
         self, mock_delay, admin_user, portrait_service, weekly_schedule
     ):
         # 1. Prepare two distinct customers and leads
-        cust1 = Customer.objects.create(display_name="Concurrent Alice", email="alice_race@test.com")
-        lead1 = Lead.objects.create(customer=cust1, source_channel="INSTAGRAM", service=portrait_service)
+        cust1 = Customer.objects.create(organization=test_workspace(), display_name="Concurrent Alice", email="alice_race@test.com")
+        lead1 = create_lead(customer=cust1, source_channel="INSTAGRAM", service=portrait_service)
         link1 = BookingLinkService.create_for_lead(lead=lead1, service=portrait_service)
 
-        cust2 = Customer.objects.create(display_name="Concurrent Bob", email="bob_race@test.com")
-        lead2 = Lead.objects.create(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
+        cust2 = Customer.objects.create(organization=test_workspace(), display_name="Concurrent Bob", email="bob_race@test.com")
+        lead2 = create_lead(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
         link2 = BookingLinkService.create_for_lead(lead=lead2, service=portrait_service)
 
-        target_date = date(2026, 8, 10)  # Monday
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))  # Monday
         tz = AvailabilityService.get_studio_timezone()
         target_slot = timezone.make_aware(datetime.combine(target_date, time(14, 0)), tz)
 
@@ -435,15 +438,15 @@ class TestBookingConcurrencyAndExclusionConstraint:
         """
         Tests two concurrent bookings with overlapping intervals (14:00-15:00 vs 14:30-15:30).
         """
-        cust1 = Customer.objects.create(display_name="Overlap Alice")
-        lead1 = Lead.objects.create(customer=cust1, source_channel="INSTAGRAM", service=portrait_service)
+        cust1 = Customer.objects.create(organization=test_workspace(), display_name="Overlap Alice")
+        lead1 = create_lead(customer=cust1, source_channel="INSTAGRAM", service=portrait_service)
         link1 = BookingLinkService.create_for_lead(lead=lead1, service=portrait_service)
 
-        cust2 = Customer.objects.create(display_name="Overlap Bob")
-        lead2 = Lead.objects.create(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
+        cust2 = Customer.objects.create(organization=test_workspace(), display_name="Overlap Bob")
+        lead2 = create_lead(customer=cust2, source_channel="WHATSAPP", service=portrait_service)
         link2 = BookingLinkService.create_for_lead(lead=lead2, service=portrait_service)
 
-        target_date = date(2026, 8, 10)  # Monday
+        target_date = (timezone.localdate() + timedelta(days=(7-timezone.localdate().weekday())%7+7))  # Monday
         tz = AvailabilityService.get_studio_timezone()
         slot1 = timezone.make_aware(datetime.combine(target_date, time(14, 0)), tz)
         slot2 = timezone.make_aware(datetime.combine(target_date, time(14, 30)), tz)

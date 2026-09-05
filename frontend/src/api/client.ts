@@ -11,8 +11,12 @@ export const apiClient = axios.create({
 
 apiClient.interceptors.request.use((config) => {
   const token = localStorage.getItem('authToken');
+  const orgId = localStorage.getItem('organizationId');
   if (token && config.headers) {
     config.headers.Authorization = `Token ${token}`;
+  }
+  if (orgId && config.headers) {
+    config.headers['X-Organization-ID'] = orgId;
   }
   return config;
 });

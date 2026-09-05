@@ -28,6 +28,7 @@ class AuditEventManager(models.Manager.from_queryset(AuditEventQuerySet)):
 
 
 class AuditEvent(models.Model):
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     """
     Append-only forensic audit log for important administrative and domain actions.
     Records actor, action, affected entity, client IP, timestamp, and sanitized metadata.

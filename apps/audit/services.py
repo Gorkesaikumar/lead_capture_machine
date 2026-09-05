@@ -146,8 +146,20 @@ class AuditService:
         # Sanitize metadata to strip passwords, tokens, and secrets
         cleaned_metadata = sanitize_metadata(metadata)
 
+        organization = getattr(request, "organization", None) if request else None
+        if organization is None:
+            from django.apps import apps
+            for model in apps.get_models():
+                if model.__name__ == entity_type:
+                    try:
+                        entity = model.objects.filter(pk=entity_id).first()
+                        organization = getattr(entity, "organization", None) or getattr(getattr(entity, "customer", None), "organization", None)
+                    except (ValueError, TypeError):
+                        pass
+                    break
         try:
             event = AuditEvent.objects.create(
+                organization=organization,
                 action=action,
                 entity_type=entity_type,
                 entity_id=entity_id_str,

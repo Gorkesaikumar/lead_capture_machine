@@ -1,3 +1,4 @@
+from apps.organizations.permissions import IsOrganizationMember, IsOrganizationAdmin
 """
 Read-Only REST API Views for Audit Logging.
 Accessible only to authenticated Studio Administrators.
@@ -42,7 +43,7 @@ class AuditEventReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
     GET /api/v1/audit/<uuid:id>/
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     serializer_class = AuditEventSerializer
     queryset = AuditEvent.objects.select_related("actor").all()
     filter_backends = [
@@ -61,4 +62,7 @@ class AuditEventReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
     ]
     ordering_fields = ["created_at", "action", "entity_type"]
     ordering = ["-created_at"]
+    def get_queryset(self):
+        return super().get_queryset().filter(organization=self.request.organization)
+
     http_method_names = ["get", "head", "options"]

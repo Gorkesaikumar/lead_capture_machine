@@ -23,6 +23,7 @@ class ConversationService:
     def store_inbound_message(
         cls,
         normalized_data: Dict[str, Any],
+        organization: "Organization",
         plog: Optional[PipelineLogger] = None,
     ) -> Tuple[Message, bool]:
         """
@@ -41,14 +42,14 @@ class ConversationService:
         external_user_id = str(normalized_data.get("external_user_id", "")).strip()
         external_message_id = str(normalized_data.get("external_message_id", "")).strip()
 
-        if not channel or not external_user_id:
+        if not organization or channel not in ("INSTAGRAM", "WHATSAPP") or not external_user_id or not external_message_id:
             raise ValueError("Channel and external_user_id are required to store an inbound message.")
 
         # 1. Fast-path Idempotency Check: deduplicate existing external message ID
         if external_message_id:
             existing_msg = (
                 Message.objects.select_related("conversation", "conversation__customer")
-                .filter(external_message_id=external_message_id)
+                .filter(external_message_id=external_message_id, conversation__organization=organization, conversation__channel=channel)
                 .first()
             )
             if existing_msg:
@@ -83,6 +84,7 @@ class ConversationService:
         customer, customer_created = CustomerResolutionService.resolve_customer(
             channel=channel,
             external_user_id=external_user_id,
+            organization=organization,
             metadata=raw_payload,
             display_name=display_name,
             phone_number=phone_number,
@@ -106,6 +108,7 @@ class ConversationService:
                     customer=customer,
                     channel=channel,
                     defaults={
+                        "organization": organization,
                         "external_thread_id": external_thread_id,
                         "last_message_at": provider_timestamp,
                         "last_message_preview": (text or f"[{message_type}]")[:250],
@@ -119,6 +122,8 @@ class ConversationService:
                     conversation_id=str(conversation.id),
                     is_new_conversation=conv_created,
                 )
+
+                conversation = Conversation.objects.select_for_update().get(pk=conversation.pk)
 
                 # Persist message (default is_read=False for new inbound messages)
                 message = Message.objects.create(
@@ -143,9 +148,10 @@ class ConversationService:
 
                 # Update conversation state
                 preview = (text or f"[{message_type}]")[:250]
+                is_latest = not conversation.last_message_at or provider_timestamp >= conversation.last_message_at
                 Conversation.objects.filter(id=conversation.id).update(
-                    last_message_at=provider_timestamp,
-                    last_message_preview=preview,
+                    last_message_at=provider_timestamp if is_latest else conversation.last_message_at,
+                    last_message_preview=preview if is_latest else conversation.last_message_preview,
                     unread_count=unread_count,
                     status=Conversation.Status.ACTIVE,
                     updated_at=timezone.now(),
@@ -175,7 +181,7 @@ class ConversationService:
                 )
                 recovered_msg = (
                     Message.objects.select_related("conversation", "conversation__customer")
-                    .filter(external_message_id=external_message_id)
+                    .filter(external_message_id=external_message_id, conversation__organization=organization, conversation__channel=channel)
                     .first()
                 )
                 if recovered_msg:
@@ -228,6 +234,8 @@ class ConversationService:
         delivery_status: str,
         error_details: Optional[Dict[str, Any]] = None,
         provider_timestamp: Optional[Any] = None,
+        organization=None,
+        channel=None,
     ) -> Optional[Message]:
         """
         Updates delivery status (SENT, DELIVERED, READ, FAILED) for a message identified by external_message_id.
@@ -245,18 +253,28 @@ class ConversationService:
             "READ": Message.DeliveryStatus.READ,
             "FAILED": Message.DeliveryStatus.FAILED,
         }
-        target_status = status_mapping.get(delivery_status, Message.DeliveryStatus.DELIVERED)
+        target_status = status_mapping.get(delivery_status)
+        if not target_status or organization is None or channel is None:
+            return None
+
+        from .models import MessageReceipt
+        MessageReceipt.objects.get_or_create(organization=organization, channel=channel, external_message_id=external_message_id, status=target_status, defaults={"provider_timestamp": provider_timestamp})
 
         with transaction.atomic():
             message = (
                 Message.objects.select_for_update(of=("self",))
-                .filter(external_message_id=external_message_id)
+                .filter(external_message_id=external_message_id, conversation__organization=organization, conversation__channel=channel, direction="OUTBOUND")
                 .first()
             )
             if not message:
                 logger.warning("Message with external_message_id=%s not found for status update", external_message_id)
                 return None
 
+            rank = {"PENDING": 0, "QUEUED": 0, "SENDING": 1, "SENT": 2, "DELIVERED": 3, "READ": 4, "FAILED": -1}
+            if message.delivery_status in ("DELIVERED", "READ") and target_status == "FAILED":
+                return message
+            if target_status != "FAILED" and rank.get(target_status, 0) <= rank.get(message.delivery_status, 0):
+                return message
             message.delivery_status = target_status
             update_fields = ["delivery_status", "updated_at"]
 
@@ -282,6 +300,8 @@ class ConversationService:
                 delivery_status=delivery_status,
                 error_details=error_details,
                 provider_timestamp=provider_timestamp,
+                organization=organization,
+                channel=channel,
             )
         except Exception as notif_exc:
             logger.warning("Failed to sync notification status for %s: %s", external_message_id, str(notif_exc))
@@ -289,16 +309,19 @@ class ConversationService:
         return message
 
     @classmethod
-    def is_within_24h_window(cls, channel: str, external_user_id: str) -> bool:
+    def is_within_24h_window(cls, channel: str, external_user_id: str, organization=None) -> bool:
         """
         Determines whether the 24-hour WhatsApp customer service window is open.
         Returns True if customer sent an inbound message within the last 24 hours.
         """
+        if organization is None:
+            return False
         from datetime import timedelta
         cutoff = timezone.now() - timedelta(hours=24)
 
         last_inbound = (
             Message.objects.filter(
+                conversation__organization=organization,
                 conversation__channel=channel,
                 conversation__customer__identities__channel=channel,
                 conversation__customer__identities__external_user_id=external_user_id,
@@ -311,7 +334,7 @@ class ConversationService:
             return False
 
         msg_time = last_inbound.provider_timestamp or last_inbound.created_at
-        return msg_time >= cutoff
+        return cutoff < msg_time <= timezone.now()
 
     @classmethod
     def mark_conversation_as_read(cls, conversation: Conversation) -> Conversation:

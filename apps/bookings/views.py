@@ -1,3 +1,4 @@
+from apps.organizations.permissions import IsOrganizationMember, IsOrganizationAdmin
 """
 Views for Booking Links, Public Customer Booking flow, and Admin Booking Management.
 """
@@ -212,7 +213,7 @@ class AdminBookingViewSet(viewsets.ReadOnlyModelViewSet):
     Admin endpoint to view and manage bookings.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
     serializer_class = BookingAdminSerializer
     queryset = (
         Booking.objects.filter(is_deleted=False)
@@ -223,6 +224,9 @@ class AdminBookingViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ["status", "service", "customer"]
     search_fields = ["customer__display_name", "customer_notes", "internal_notes"]
     ordering_fields = ["starts_at", "booked_at", "created_at"]
+
+    def get_queryset(self):
+        return super().get_queryset().filter(customer__organization=self.request.organization)
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):
@@ -245,12 +249,15 @@ class AdminBookingLinkCreateView(APIView):
     POST /api/v1/bookings/links/
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsOrganizationMember]
 
     def post(self, request, *args, **kwargs):
         serializer = CreateBookingLinkSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+
+        if data["lead"].organization_id != request.organization.id or (data.get("service") and data["service"].organization_id != request.organization.id):
+            return Response({"detail": "Lead or service not found in this workspace."}, status=404)
 
         link = BookingLinkService.create_for_lead(
             lead=data["lead"],

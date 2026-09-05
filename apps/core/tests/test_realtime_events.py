@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for real-time event broadcasting, transaction on_commit guarantees, and pipeline delivery.
 """
@@ -36,12 +37,13 @@ class RealtimeEventsTests(TransactionTestCase):
             is_staff=True,
             is_active=True,
         )
+        add_member(self.admin)
         self.token, _ = Token.objects.get_or_create(user=self.admin)
-        self.customer = Customer.objects.create(
+        self.customer = Customer.objects.create(organization=test_workspace(),
             display_name="Priya Sharma",
             primary_phone="+919876543210",
         )
-        self.service = PhotographyService.objects.create(
+        self.service = PhotographyService.objects.create(organization=test_workspace(),
             name="Baby Shoot",
             slug="baby-shoot",
             duration_minutes=60,
@@ -51,7 +53,7 @@ class RealtimeEventsTests(TransactionTestCase):
 
     @database_sync_to_async
     def _create_message_and_broadcast(self):
-        conv = Conversation.objects.create(
+        conv = Conversation.objects.create(organization=test_workspace(),
             customer=self.customer,
             channel="INSTAGRAM",
         )
@@ -66,7 +68,7 @@ class RealtimeEventsTests(TransactionTestCase):
 
     @database_sync_to_async
     def _create_lead_and_broadcast(self):
-        lead = Lead.objects.create(
+        lead = create_lead(
             customer=self.customer,
             source_channel="INSTAGRAM",
             service=self.service,
@@ -139,3 +141,37 @@ class RealtimeEventsTests(TransactionTestCase):
 
             # Mock should NOT have been called because transaction rolled back
             mock_broadcast.assert_not_called()
+
+    @database_sync_to_async
+    def _other_workspace_message(self):
+        owner = User.objects.create_user(email="other-ws@example.test", password="Secret!789")
+        org = make_organization(name="Other", owner=owner)
+        customer = Customer.objects.create(organization=org, display_name="Private customer")
+        conv = Conversation.objects.create(organization=org, customer=customer, channel="INSTAGRAM")
+        msg = Message.objects.create(conversation=conv, direction="INBOUND", text="Private message")
+        broadcast_new_message(msg)
+        return str(conv.pk)
+
+    async def test_other_workspace_events_and_conversation_are_denied(self):
+        communicator = WebsocketCommunicator(application, "/ws/admin/dashboard/", subprotocols=["v4", f"token.{self.token.key}"])
+        connected, protocol = await communicator.connect()
+        self.assertTrue(connected)
+        self.assertEqual(protocol, "v4")
+        await communicator.receive_json_from()
+        other_id = await self._other_workspace_message()
+        self.assertTrue(await communicator.receive_nothing(timeout=0.1))
+        denied = WebsocketCommunicator(application, f"/ws/admin/conversations/{other_id}/", subprotocols=["v4", f"token.{self.token.key}"])
+        connected, _ = await denied.connect()
+        self.assertFalse(connected)
+        await denied.disconnect()
+        await communicator.disconnect()
+
+    async def test_revoked_token_closes_existing_connection(self):
+        communicator = WebsocketCommunicator(application, "/ws/admin/dashboard/", subprotocols=["v4", f"token.{self.token.key}"])
+        self.assertTrue((await communicator.connect())[0])
+        await communicator.receive_json_from()
+        await database_sync_to_async(Token.objects.filter(user=self.admin).delete)()
+        await self._create_message_and_broadcast()
+        event = await communicator.receive_output()
+        self.assertEqual(event["type"], "websocket.close")
+        await communicator.disconnect()

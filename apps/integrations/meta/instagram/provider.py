@@ -23,9 +23,11 @@ class InstagramMessagingProvider(MessagingProvider):
         self,
         access_token: Optional[str] = None,
         client: Optional[MetaGraphClient] = None,
+        account_id: str = "me",
     ):
         self._access_token = access_token or getattr(settings, "INSTAGRAM_ACCESS_TOKEN", "")
-        self.client = client or MetaGraphClient(access_token=self._access_token)
+        self.account_id = account_id
+        self.client = client or MetaGraphClient(access_token=self._access_token, graph_host="graph.instagram.com")
 
     @property
     def channel(self) -> str:
@@ -169,11 +171,12 @@ class InstagramMessagingProvider(MessagingProvider):
         )
 
         try:
-            response = self.client.post("me/messages", payload, access_token=self._access_token)
+            response = self.client.post(f"{self.account_id}/messages", payload, access_token=self._access_token)
             message_id = response.get("message_id")
             logger.info("Successfully sent Instagram message to %s (mid=%s)", clean_recipient, message_id)
             return OutboundResult(
-                success=True,
+                success=bool(message_id),
+                error_message=None if message_id else "Meta returned no message ID; acceptance is unconfirmed.",
                 external_message_id=message_id,
                 provider_response=response,
             )
@@ -251,11 +254,12 @@ class InstagramMessagingProvider(MessagingProvider):
         }
 
         try:
-            response = self.client.post("me/messages", template_payload, access_token=self._access_token)
+            response = self.client.post(f"{self.account_id}/messages", template_payload, access_token=self._access_token)
             message_id = response.get("message_id")
             logger.info("Sent Instagram booking-link template to %s (mid=%s)", clean_recipient, message_id)
             return OutboundResult(
-                success=True,
+                success=bool(message_id),
+                error_message=None if message_id else "Meta returned no message ID; acceptance is unconfirmed.",
                 external_message_id=message_id,
                 provider_response=response,
             )
@@ -303,11 +307,12 @@ class InstagramMessagingProvider(MessagingProvider):
         }
 
         try:
-            response = self.client.post("me/messages", payload, access_token=self._access_token)
+            response = self.client.post(f"{self.account_id}/messages", payload, access_token=self._access_token)
             message_id = response.get("message_id")
             logger.info("Sent Instagram media message (%s) to %s (mid=%s)", ig_type, clean_recipient, message_id)
             return OutboundResult(
-                success=True,
+                success=bool(message_id),
+                error_message=None if message_id else "Meta returned no message ID; acceptance is unconfirmed.",
                 external_message_id=message_id,
                 provider_response=response,
             )

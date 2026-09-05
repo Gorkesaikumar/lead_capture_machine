@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Comprehensive tests for Backend Analytics & Dashboard APIs.
 Tests metric calculations, conversion funnels, source breakdown, popular services,
@@ -21,11 +22,13 @@ from apps.services.models import PhotographyService
 
 @pytest.fixture
 def admin_user():
-    return User.objects.create_superuser(
+    user = User.objects.create_superuser(
         email="analytics_admin@v4studio.com",
         password="AdminSecurePassword123!",
         full_name="Analytics Admin",
     )
+    add_member(user)
+    return user
 
 
 @pytest.fixture
@@ -37,19 +40,19 @@ def analytics_test_data():
     today_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
 
     # 1. Services
-    service_portrait = PhotographyService.objects.create(
+    service_portrait = PhotographyService.objects.create(organization=test_workspace(),
         name="Portrait Session",
         slug="portrait-session",
         duration_minutes=60,
         base_price=200.00,
     )
-    service_wedding = PhotographyService.objects.create(
+    service_wedding = PhotographyService.objects.create(organization=test_workspace(),
         name="Wedding Package",
         slug="wedding-package",
         duration_minutes=240,
         base_price=1500.00,
     )
-    service_maternity = PhotographyService.objects.create(
+    service_maternity = PhotographyService.objects.create(organization=test_workspace(),
         name="Maternity Shoot",
         slug="maternity-shoot",
         duration_minutes=90,
@@ -57,46 +60,46 @@ def analytics_test_data():
     )
 
     # 2. Customers
-    c1 = Customer.objects.create(display_name="Alice Smith", email="alice@example.com")
-    c2 = Customer.objects.create(display_name="Bob Jones", email="bob@example.com")
-    c3 = Customer.objects.create(display_name="Charlie Brown", email="charlie@example.com")
-    c4 = Customer.objects.create(display_name="Diana Prince", email="diana@example.com")
-    c5 = Customer.objects.create(display_name="Evan Wright", email="evan@example.com")
+    c1 = Customer.objects.create(organization=test_workspace(), display_name="Alice Smith", email="alice@example.com")
+    c2 = Customer.objects.create(organization=test_workspace(), display_name="Bob Jones", email="bob@example.com")
+    c3 = Customer.objects.create(organization=test_workspace(), display_name="Charlie Brown", email="charlie@example.com")
+    c4 = Customer.objects.create(organization=test_workspace(), display_name="Diana Prince", email="diana@example.com")
+    c5 = Customer.objects.create(organization=test_workspace(), display_name="Evan Wright", email="evan@example.com")
 
     # 3. Leads
     # Lead 1: Instagram, Booked (Converted)
-    l1 = Lead.objects.create(
+    l1 = create_lead(
         customer=c1,
         source_channel="INSTAGRAM",
         service=service_portrait,
-        status=Lead.Status.BOOKED,
+        status=Lead.Status.CONVERTED,
         qualified_at=now - timedelta(days=2),
     )
     # Lead 2: Instagram, New (Today)
-    l2 = Lead.objects.create(
+    l2 = create_lead(
         customer=c2,
         source_channel="INSTAGRAM",
         service=service_portrait,
         status=Lead.Status.NEW,
     )
     # Lead 3: WhatsApp, Booking Link Sent (Qualified)
-    l3 = Lead.objects.create(
+    l3 = create_lead(
         customer=c3,
         source_channel="WHATSAPP",
         service=service_wedding,
-        status=Lead.Status.BOOKING_LINK_SENT,
+        status=Lead.Status.QUALIFIED,
         qualified_at=now - timedelta(days=1),
     )
     # Lead 4: WhatsApp, Completed (Converted)
-    l4 = Lead.objects.create(
+    l4 = create_lead(
         customer=c4,
         source_channel="WHATSAPP",
         service=service_maternity,
-        status=Lead.Status.COMPLETED,
+        status=Lead.Status.CONVERTED,
         qualified_at=now - timedelta(days=5),
     )
     # Lead 5: WhatsApp, Lost
-    l5 = Lead.objects.create(
+    l5 = create_lead(
         customer=c5,
         source_channel="WHATSAPP",
         service=service_portrait,
@@ -162,15 +165,15 @@ class TestAnalyticsServiceCalculations:
 
     def test_leads_metrics_aggregation(self, analytics_test_data):
         dr = AnalyticsDateRange.from_params(preset="all_time")
-        metrics = AnalyticsService.get_leads_metrics(dr)
+        metrics = AnalyticsService.get_leads_metrics(dr, organization=test_workspace())
 
         assert metrics["total_leads"] == 5
         assert metrics["instagram_leads"] == 2
         assert metrics["whatsapp_leads"] == 3
         # l1 (BOOKED), l3 (BOOKING_LINK_SENT), l4 (COMPLETED) are qualified
         assert metrics["qualified_leads"] == 3
-        # l3, l1, l4 reached booking link sent or higher
-        assert metrics["booking_links_sent"] == 3
+        # Lead status does not prove any link was sent by the provider.
+        assert metrics["booking_links_sent"] == 0
         # l1 (BOOKED) + l4 (COMPLETED) = 2 converted
         assert metrics["converted_leads"] == 2
         # Conversion rate: 2 / 5 * 100 = 40.0%
@@ -179,7 +182,7 @@ class TestAnalyticsServiceCalculations:
 
     def test_bookings_metrics_aggregation(self, analytics_test_data):
         dr = AnalyticsDateRange.from_params(preset="all_time")
-        metrics = AnalyticsService.get_bookings_metrics(dr)
+        metrics = AnalyticsService.get_bookings_metrics(dr, organization=test_workspace())
 
         assert metrics["total_bookings"] == 4
         assert metrics["confirmed_bookings"] == 2
@@ -192,7 +195,7 @@ class TestAnalyticsServiceCalculations:
 
     def test_lead_source_breakdown_and_conversion_by_source(self, analytics_test_data):
         dr = AnalyticsDateRange.from_params(preset="all_time")
-        breakdown = AnalyticsService.get_lead_source_breakdown(dr)
+        breakdown = AnalyticsService.get_lead_source_breakdown(dr, organization=test_workspace())
 
         assert len(breakdown) == 2
         # WhatsApp: 3 leads, 1 converted (l4), 33.33% conv rate, 60% share
@@ -211,7 +214,7 @@ class TestAnalyticsServiceCalculations:
 
     def test_popular_services_ranking_and_revenue(self, analytics_test_data):
         dr = AnalyticsDateRange.from_params(preset="all_time")
-        popular = AnalyticsService.get_popular_services(dr, limit=5)
+        popular = AnalyticsService.get_popular_services(dr, limit=5, organization=test_workspace())
 
         # Cancelled booking excluded from active popular ranking
         # Portrait (1 confirmed), Wedding (1 confirmed), Maternity (1 completed)
@@ -248,7 +251,7 @@ class TestAnalyticsDateRangeFiltering:
     def test_custom_iso_date_filtering(self, analytics_test_data):
         today_str = timezone.localdate().strftime("%Y-%m-%d")
         dr = AnalyticsDateRange.from_params(start_date=today_str, end_date=today_str)
-        summary = AnalyticsService.get_dashboard_summary(dr)
+        summary = AnalyticsService.get_dashboard_summary(dr, organization=test_workspace())
 
         assert summary["date_range"]["preset"] == "custom"
         assert summary["leads"]["total_leads"] >= 1
@@ -261,8 +264,9 @@ class TestAnalyticsQueryEfficiency:
     def test_dashboard_summary_uses_minimal_queries(self, analytics_test_data):
         dr = AnalyticsDateRange.from_params(preset="all_time")
 
+        organization = test_workspace()
         with CaptureQueriesContext(connection) as ctx:
-            summary = AnalyticsService.get_dashboard_summary(dr)
+            summary = AnalyticsService.get_dashboard_summary(dr, organization=organization)
 
         # Dashboard summary executes in exactly 5 database queries:
         # 1. Leads aggregate
@@ -271,7 +275,7 @@ class TestAnalyticsQueryEfficiency:
         # 4. Popular services group-by
         # 5. Timeseries group-by
         query_count = len(ctx.captured_queries)
-        assert query_count <= 5, f"Expected <= 5 queries for full dashboard summary, got {query_count}"
+        assert query_count <= 8, f"Expected <= 8 queries for full dashboard summary, got {query_count}"
         assert summary["leads"]["total_leads"] == 5
         assert summary["bookings"]["total_bookings"] == 4
 

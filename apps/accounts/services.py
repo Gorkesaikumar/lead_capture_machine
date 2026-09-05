@@ -10,6 +10,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from apps.accounts.models import User
 from apps.audit.models import AuditEvent
 from apps.audit.services import AuditService
+from apps.core.exceptions import AuthenticationError
 
 logger = logging.getLogger("apps.accounts")
 
@@ -26,7 +27,8 @@ class AuthService:
         and update last_login timestamp.
 
         Raises:
-            AuthenticationFailed: If credentials are invalid or user is inactive.
+            AuthenticationFailed: If required credentials are missing.
+            AuthenticationError: If credentials are invalid or user is inactive.
         """
         if not email or not password:
             raise AuthenticationFailed("Email and password are required.")
@@ -41,7 +43,7 @@ class AuthService:
                 ip_address or "unknown",
             )
             # Generic error to prevent account enumeration
-            raise AuthenticationFailed("Invalid email or password.")
+            raise AuthenticationError("Invalid email or password.", code="invalid_credentials")
 
         if not user.is_active:
             logger.warning(
@@ -49,7 +51,7 @@ class AuthService:
                 user.id,
                 user.email,
             )
-            raise AuthenticationFailed("User account is disabled.")
+            raise AuthenticationError("Invalid email or password.", code="invalid_credentials")
 
         with transaction.atomic():
             update_last_login(None, user)
@@ -143,4 +145,3 @@ class AuthService:
             )
 
         return target_user
-

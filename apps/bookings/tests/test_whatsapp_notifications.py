@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from django.utils import timezone
@@ -15,11 +16,18 @@ from apps.integrations.meta.base import OutboundResult
 
 class WhatsAppBookingNotificationTests(TestCase):
     def setUp(self):
-        self.customer = Customer.objects.create(
+        self.customer = Customer.objects.create(organization=test_workspace(),
             display_name="Test User",
             primary_phone="+1234567890",
         )
-        self.service = PhotographyService.objects.create(
+        from tests.tenant_fixtures import configure_channel
+        from apps.customers.models import CustomerIdentity
+        from apps.conversations.models import Conversation, Message
+        configure_channel(channel="WHATSAPP")
+        CustomerIdentity.objects.create(customer=self.customer, channel="WHATSAPP", external_user_id="1234567890")
+        conv = Conversation.objects.create(organization=self.customer.organization, customer=self.customer, channel="WHATSAPP")
+        Message.objects.create(conversation=conv, direction="INBOUND", text="Hi", provider_timestamp=timezone.now())
+        self.service = PhotographyService.objects.create(organization=test_workspace(),
             name="Test Service",
             base_price=500,
             duration_minutes=60,
@@ -39,88 +47,34 @@ class WhatsAppBookingNotificationTests(TestCase):
             status=Booking.Status.CONFIRMED,
         )
 
-    @patch("apps.bookings.tasks.WhatsAppMessagingProvider")
-    def test_successful_notification_creates_record(self, MockProvider):
-        # Setup mock
-        mock_provider_instance = MockProvider.return_value
-        mock_provider_instance.send_booking_confirmation_message.return_value = OutboundResult(
-            success=True,
-            external_message_id="wamid.12345",
-            provider_response={}
-        )
+    @patch("apps.conversations.outbound.WhatsAppMessagingProvider.send_text_message")
+    def test_successful_notification_creates_record(self, send):
+        send.return_value = OutboundResult(success=True, external_message_id="wamid.booking-confirmed")
+        result = send_booking_confirmation_whatsapp(self.booking.pk)
+        self.assertEqual(result["status"], "SENT")
+        self.assertEqual(Notification.objects.get().external_message_id, "wamid.booking-confirmed")
 
-        # Execute task
-        send_booking_confirmation_whatsapp(self.booking.id)
+    @patch("apps.conversations.outbound.WhatsAppMessagingProvider.send_text_message")
+    def test_idempotency_prevents_duplicate_send(self, send):
+        send.return_value = OutboundResult(success=True, external_message_id="wamid.booking-once")
+        send_booking_confirmation_whatsapp(self.booking.pk)
+        send_booking_confirmation_whatsapp(self.booking.pk)
+        send.assert_called_once()
+        self.assertEqual(Notification.objects.count(), 1)
 
-        # Verify Notification was created and marked SENT
-        notification = Notification.objects.get(idempotency_key=f"booking_conf_{self.booking.id}")
-        self.assertEqual(notification.status, Notification.Status.SENT)
-        self.assertEqual(notification.external_message_id, "wamid.12345")
-        self.assertEqual(notification.notification_type, Notification.NotificationType.BOOKING_CONFIRMATION)
+    @patch("apps.conversations.outbound.WhatsAppMessagingProvider.send_text_message")
+    def test_timeout_is_retained_without_automatic_resend(self, send):
+        send.return_value = OutboundResult(success=False, error_message="Network timeout")
+        result = send_booking_confirmation_whatsapp(self.booking.pk)
+        self.assertEqual(result["status"], "FAILED")
+        send_booking_confirmation_whatsapp(self.booking.pk)
+        send.assert_called_once()
+        self.assertIn("response was not received", Notification.objects.get().error_message)
 
-    @patch("apps.bookings.tasks.WhatsAppMessagingProvider")
-    def test_idempotency_prevents_duplicate_send(self, MockProvider):
-        # Create a notification that is already SENT
-        Notification.objects.create(
-            idempotency_key=f"booking_conf_{self.booking.id}",
-            customer=self.customer,
-            channel=Notification.Channel.WHATSAPP,
-            notification_type=Notification.NotificationType.BOOKING_CONFIRMATION,
-            status=Notification.Status.SENT,
-            external_message_id="wamid.existing"
-        )
-
-        mock_provider_instance = MockProvider.return_value
-
-        # Execute task
-        send_booking_confirmation_whatsapp(self.booking.id)
-
-        # Verify provider was NOT called
-        mock_provider_instance.send_booking_confirmation_message.assert_not_called()
-
-    @patch("apps.bookings.tasks.WhatsAppMessagingProvider")
-    @patch("apps.bookings.tasks.send_booking_confirmation_whatsapp.retry")
-    def test_transient_failure_retries_and_marks_failed(self, mock_retry, MockProvider):
-        # Setup mock for failure
-        mock_provider_instance = MockProvider.return_value
-        mock_provider_instance.send_booking_confirmation_message.return_value = OutboundResult(
-            success=False,
-            error_message="Connection timeout"
-        )
-        
-        # We must configure retry to raise an exception to simulate Celery aborting the current execution frame
-        mock_retry.side_effect = Exception("Retry triggered")
-
-        # Execute task
-        with self.assertRaises(Exception) as context:
-            send_booking_confirmation_whatsapp(self.booking.id)
-            
-        self.assertTrue("Retry triggered" in str(context.exception))
-
-        # Verify Notification was marked FAILED, but not permanent
-        notification = Notification.objects.get(idempotency_key=f"booking_conf_{self.booking.id}")
-        self.assertEqual(notification.status, Notification.Status.FAILED)
-        self.assertFalse(notification.is_permanent_error)
-        self.assertEqual(notification.error_message, "Connection timeout")
-        mock_retry.assert_called_once()
-        
-    @patch("apps.bookings.tasks.WhatsAppMessagingProvider")
-    @patch("apps.bookings.tasks.send_booking_confirmation_whatsapp.retry")
-    def test_permanent_failure_halts_retries(self, mock_retry, MockProvider):
-        # Setup mock for permanent failure
-        mock_provider_instance = MockProvider.return_value
-        mock_provider_instance.send_booking_confirmation_message.return_value = OutboundResult(
-            success=False,
-            error_message="WHATSAPP_PHONE_NUMBER_ID is not configured in settings."
-        )
-
-        # Execute task
-        send_booking_confirmation_whatsapp(self.booking.id)
-
-        # Verify Notification was marked FAILED and permanent
-        notification = Notification.objects.get(idempotency_key=f"booking_conf_{self.booking.id}")
-        self.assertEqual(notification.status, Notification.Status.FAILED)
-        self.assertTrue(notification.is_permanent_error)
-        
-        # Verify retry was NOT called
-        mock_retry.assert_not_called()
+    @patch("apps.conversations.outbound.WhatsAppMessagingProvider.send_text_message")
+    def test_missing_channel_blocks_provider_call(self, send):
+        from apps.integrations.models import IntegrationConfig
+        IntegrationConfig.objects.all().delete()
+        result = send_booking_confirmation_whatsapp(self.booking.pk)
+        self.assertEqual(result["status"], "FAILED")
+        send.assert_not_called()

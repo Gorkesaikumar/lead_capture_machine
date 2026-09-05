@@ -15,6 +15,13 @@ class Customer(CoreModel, SoftDeletableModel):
     Aggregates communication channels, leads, conversations, and bookings.
     """
 
+    organization = models.ForeignKey(
+        "organizations.Organization",
+        on_delete=models.CASCADE,
+        related_name="customers",
+        help_text=_("The organization this customer belongs to"),
+        null=True,  # Initially null for migration, will become required
+    )
     display_name = models.CharField(
         _("display name"),
         max_length=255,
@@ -102,6 +109,7 @@ class CustomerIdentity(CoreModel):
         INSTAGRAM = "INSTAGRAM", _("Instagram")
         WHATSAPP = "WHATSAPP", _("WhatsApp")
 
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     customer = models.ForeignKey(
         Customer,
         on_delete=models.CASCADE,
@@ -147,8 +155,8 @@ class CustomerIdentity(CoreModel):
         ordering = ["-created_at"]
         constraints = [
             models.UniqueConstraint(
-                fields=["channel", "external_user_id"],
-                name="unique_channel_external_user_id",
+                fields=["organization", "channel", "external_user_id"],
+                name="unique_tenant_channel_identity",
             ),
         ]
         indexes = [
@@ -159,3 +167,7 @@ class CustomerIdentity(CoreModel):
     def __str__(self):
         ident = self.username or self.external_user_id
         return f"[{self.get_channel_display()}] {ident}"
+
+    def save(self, *args, **kwargs):
+        self.organization_id = self.customer.organization_id
+        super().save(*args, **kwargs)

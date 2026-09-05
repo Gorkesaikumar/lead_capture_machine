@@ -1,3 +1,4 @@
+from tests.tenant_fixtures import test_workspace, make_organization, create_lead, add_member
 """
 Tests for Conversations and Messages domain models, ConversationService idempotency/concurrency, and APIs.
 """
@@ -16,22 +17,22 @@ from apps.customers.models import Customer
 class TestConversationModelsAndServices:
     def test_conversation_customer_channel_unique_constraint(self):
         """Database enforces unique constraint on (customer, channel)."""
-        customer = Customer.objects.create(display_name="Rohan Mehra")
-        Conversation.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Rohan Mehra")
+        Conversation.objects.create(organization=test_workspace(),
             customer=customer,
             channel=Conversation.Channel.INSTAGRAM,
         )
 
         with pytest.raises(IntegrityError):
-            Conversation.objects.create(
+            Conversation.objects.create(organization=test_workspace(),
                 customer=customer,
                 channel=Conversation.Channel.INSTAGRAM,
             )
 
     def test_message_unique_external_message_id(self):
         """Database enforces unique constraint on external_message_id."""
-        customer = Customer.objects.create(display_name="Deepika Roy")
-        conv = Conversation.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Deepika Roy")
+        conv = Conversation.objects.create(organization=test_workspace(),
             customer=customer,
             channel=Conversation.Channel.WHATSAPP,
         )
@@ -60,7 +61,7 @@ class TestConversationModelsAndServices:
             "text": "Hello, I would like to check prices for newborn photography",
             "username": "priya_art",
             "display_name": "Priya Arts",
-        })
+        }, organization=test_workspace())
 
         assert created is True
         assert msg.direction == Message.Direction.INBOUND
@@ -81,13 +82,13 @@ class TestConversationModelsAndServices:
             "display_name": "Alia Bhatt",
         }
 
-        msg1, created1 = ConversationService.store_inbound_message(payload)
+        msg1, created1 = ConversationService.store_inbound_message(payload, organization=test_workspace())
         assert created1 is True
         conv = msg1.conversation
         assert conv.unread_count == 1
 
         # Second delivery of identical webhook
-        msg2, created2 = ConversationService.store_inbound_message(payload)
+        msg2, created2 = ConversationService.store_inbound_message(payload, organization=test_workspace())
         assert created2 is False
         assert msg1.id == msg2.id
 
@@ -98,8 +99,8 @@ class TestConversationModelsAndServices:
 
     def test_store_outbound_message(self):
         """Outbound messages update last_message_at without incrementing unread_count."""
-        customer = Customer.objects.create(display_name="Ranbir Kapoor")
-        conv = Conversation.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Ranbir Kapoor")
+        conv = Conversation.objects.create(organization=test_workspace(),
             customer=customer,
             channel=Conversation.Channel.WHATSAPP,
             unread_count=2,
@@ -133,7 +134,7 @@ class TestConversationModelsAndServices:
         def worker_task(thread_id):
             close_old_connections()
             try:
-                msg, created = ConversationService.store_inbound_message(payload)
+                msg, created = ConversationService.store_inbound_message(payload, organization=test_workspace())
                 return msg.id, created
             finally:
                 close_old_connections()
@@ -157,16 +158,16 @@ class TestConversationModelsAndServices:
 class TestConversationAPI:
     def test_conversation_list_and_filters(self, authenticated_client):
         """Admin can list and filter conversations by channel, unread status, and customer."""
-        cust1 = Customer.objects.create(display_name="Kareena Kapoor")
-        conv1 = Conversation.objects.create(
+        cust1 = Customer.objects.create(organization=test_workspace(), display_name="Kareena Kapoor")
+        conv1 = Conversation.objects.create(organization=test_workspace(),
             customer=cust1,
             channel=Conversation.Channel.INSTAGRAM,
             unread_count=3,
             last_message_at=timezone.now(),
         )
 
-        cust2 = Customer.objects.create(display_name="Saif Ali Khan")
-        conv2 = Conversation.objects.create(
+        cust2 = Customer.objects.create(organization=test_workspace(), display_name="Saif Ali Khan")
+        conv2 = Conversation.objects.create(organization=test_workspace(),
             customer=cust2,
             channel=Conversation.Channel.WHATSAPP,
             unread_count=0,
@@ -192,8 +193,8 @@ class TestConversationAPI:
 
     def test_conversation_messages_pagination(self, authenticated_client):
         """Admin can fetch paginated message history for a conversation."""
-        customer = Customer.objects.create(display_name="Anushka Sharma")
-        conv = Conversation.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Anushka Sharma")
+        conv = Conversation.objects.create(organization=test_workspace(),
             customer=customer,
             channel=Conversation.Channel.WHATSAPP,
         )
@@ -211,12 +212,12 @@ class TestConversationAPI:
         data = resp.json()
         assert data["count"] == 5
         assert len(data["results"]) == 5
-        assert data["results"][0]["text"] == "Message number 1"
+        assert data["results"][0]["text"] == "Message number 5"
 
     def test_conversation_mark_read(self, authenticated_client):
         """Admin can mark a conversation as read, resetting unread_count to 0."""
-        customer = Customer.objects.create(display_name="Virat Kohli")
-        conv = Conversation.objects.create(
+        customer = Customer.objects.create(organization=test_workspace(), display_name="Virat Kohli")
+        conv = Conversation.objects.create(organization=test_workspace(),
             customer=customer,
             channel=Conversation.Channel.WHATSAPP,
             unread_count=5,

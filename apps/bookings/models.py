@@ -23,6 +23,7 @@ def generate_booking_token() -> str:
 
 
 class Booking(CoreModel, SoftDeletableModel):
+    organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, null=True)
     """
     Represents a customer appointment booking.
     Guarantees non-overlapping active appointments using PostgreSQL ExclusionConstraint.
@@ -143,9 +144,10 @@ class Booking(CoreModel, SoftDeletableModel):
         ]
         constraints = [
             ExclusionConstraint(
-                name="exclude_overlapping_active_bookings",
+                name="exclude_tenant_overlapping_bookings",
                 expressions=[
                     ("blocked_time_range", RangeOperators.OVERLAPS),
+                    ("organization", RangeOperators.EQUAL),
                 ],
                 condition=models.Q(status__in=["PENDING", "CONFIRMED"], is_deleted=False),
             )
@@ -155,6 +157,7 @@ class Booking(CoreModel, SoftDeletableModel):
         return f"Booking #{str(self.id)[:8]} - {self.customer.display_name} ({self.service.name}) at {self.starts_at}"
 
     def save(self, *args, **kwargs):
+        self.organization_id = self.customer.organization_id
         # Calculate blocked boundaries from session times and buffers
         if self.starts_at and self.ends_at:
             if not self.blocked_starts_at:

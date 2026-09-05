@@ -1,0 +1,76 @@
+const { chromium, expect } = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.route('**/api/v1/**', async route => {
+    const url = new URL(route.request().url());
+    const response = await route.fetch({ url: process.env.V4_BACKEND_URL + url.pathname + url.search });
+    await route.fulfill({ response });
+  });
+  await page.addInitScript(({ token, org }) => {
+    localStorage.setItem('authToken', token);
+    localStorage.setItem('organizationId', org);
+  }, { token: process.env.V4_TEST_TOKEN, org: process.env.V4_TEST_ORG });
+  const artifacts = process.env.V4_BROWSER_ARTIFACTS || path.resolve('test-results/platform');
+  fs.mkdirSync(artifacts, { recursive: true });
+  try {
+    await page.goto('http://127.0.0.1:5178/app/automations');
+    await page.getByRole('button', { name: 'Create automation' }).click();
+    await page.getByLabel('Name', { exact: true }).fill('Browser pricing');
+    await page.getByLabel('Trigger keyword').fill('price');
+    await page.getByLabel('Reply text').fill('Thanks for asking. Our team will share pricing.');
+    await page.getByRole('button', { name: 'Add action', exact: true }).click();
+    await page.getByLabel('Tag to add').fill('Pricing');
+    await page.getByLabel('Enable after saving', { exact: false }).check();
+    await page.getByRole('dialog').evaluate(el => el.scrollTop = 0);
+    await page.screenshot({ path: path.join(artifacts, 'automation-builder.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Save automation' }).click();
+    await expect(page.getByRole('heading', { name: 'Browser pricing' })).toBeVisible();
+    await page.getByRole('button', { name: 'Preview', exact: true }).click();
+    await page.getByRole('button', { name: 'Test rule' }).click();
+    await expect(page.getByText('Rule matches', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'Edit Browser pricing' }).click();
+    await page.getByLabel('Name', { exact: true }).fill('Browser pricing updated');
+    await page.getByRole('button', { name: 'Save automation' }).click();
+    await expect(page.getByRole('heading', { name: 'Browser pricing updated' })).toBeVisible();
+    await page.getByRole('button', { name: 'Enabled', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Disabled', exact: true })).toBeVisible();
+    await page.goto('http://127.0.0.1:5178/app/conversations');
+    await page.getByText('Instagram Browser Customer', { exact: true }).first().click();
+    await page.getByLabel('Message', { exact: true }).fill('Manual browser reply');
+    await page.getByRole('button', { name: 'Send reply', exact: true }).click();
+    await expect(page.getByText('Reply queued. Delivery status will appear in the conversation.')).toBeVisible();
+    await expect(page.getByText('Manual browser reply', { exact: true }).first()).toBeVisible();
+    await page.screenshot({ path: path.join(artifacts, 'instagram-inbox.png'), fullPage: true });
+    await page.getByRole('link', { name: 'View Full Lead' }).click();
+    await expect(page).toHaveURL(/\/app\/leads\//);
+    await expect(page.getByText('Instagram Browser Customer', { exact: true }).first()).toBeVisible();
+    await page.goto('http://127.0.0.1:5178/app/conversations');
+    await page.getByText('WhatsApp Browser Customer', { exact: true }).first().click();
+    await page.getByLabel('Message', { exact: true }).fill('WhatsApp browser reply');
+    await page.getByRole('button', { name: 'Send reply', exact: true }).click();
+    await expect(page.getByText('WhatsApp browser reply', { exact: true }).first()).toBeVisible();
+    await page.getByLabel('Use an approved WhatsApp template').check();
+    await page.getByLabel('Approved template name').fill('booking_reminder');
+    const templateResponse = page.waitForResponse(response => response.url().includes('/send/') && response.request().method() === 'POST' && response.request().postDataJSON()?.template?.name === 'booking_reminder');
+    await page.getByRole('button', { name: 'Send reply', exact: true }).click();
+    const acceptedTemplate = await templateResponse;
+    expect(acceptedTemplate.status()).toBe(202);
+    expect((await acceptedTemplate.json()).attachment_metadata.dispatch.template.name).toBe('booking_reminder');
+    await expect(page.getByText('Reply queued. Delivery status will appear in the conversation.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send reply', exact: true })).toBeEnabled();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(artifacts, 'mobile-inbox.png'), fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
+    expect(errors).toEqual([]);
+    console.log('PASS: create/edit/enable/disable/preview automation; Instagram + WhatsApp manual queue; template; responsive inbox; no page exceptions.');
+  } catch (error) {
+    await page.screenshot({ path: path.join(artifacts, 'failure.png'), fullPage: true });
+    throw error;
+  } finally { await page.unrouteAll({ behavior: 'ignoreErrors' }); await browser.close(); }
+})().catch(e => { console.error(e); process.exit(1); });

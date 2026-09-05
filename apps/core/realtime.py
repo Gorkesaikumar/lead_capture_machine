@@ -117,7 +117,7 @@ def broadcast_new_message(message, conversation=None, lead_id: Optional[str] = N
     resolved_lead_id = lead_id
     if not resolved_lead_id and conv:
         from apps.leads.models import Lead
-        lead = Lead.objects.filter(conversation=conv, is_deleted=False).order_by("-created_at").first()
+        lead = getattr(conv, "lead", None)
         if lead:
             resolved_lead_id = str(lead.id)
 
@@ -139,7 +139,7 @@ def broadcast_new_message(message, conversation=None, lead_id: Optional[str] = N
     }
 
     # Broadcast to admin dashboard
-    broadcast_on_commit("admin_dashboard", EventTypes.NEW_MESSAGE, payload)
+    broadcast_on_commit(f"organization_{conv.organization_id if conv else None}", EventTypes.NEW_MESSAGE, payload)
 
     # Broadcast to conversation group
     broadcast_on_commit(f"conversation_{conv_id}", EventTypes.NEW_MESSAGE, payload)
@@ -164,7 +164,7 @@ def broadcast_message_updated(message, conversation=None, lead_id: Optional[str]
         "updated_at": message.updated_at.isoformat() if hasattr(message, "updated_at") and message.updated_at else timezone.now().isoformat(),
     }
 
-    broadcast_on_commit("admin_dashboard", EventTypes.MESSAGE_UPDATED, payload)
+    broadcast_on_commit(f"organization_{conv.organization_id if conv else None}", EventTypes.MESSAGE_UPDATED, payload)
     broadcast_on_commit(f"conversation_{conv_id}", EventTypes.MESSAGE_UPDATED, payload)
     if lead_id:
         broadcast_on_commit(f"lead_{lead_id}", EventTypes.MESSAGE_UPDATED, payload)
@@ -190,8 +190,8 @@ def broadcast_new_lead(lead) -> None:
         "created_at": lead.created_at.isoformat() if lead.created_at else timezone.now().isoformat(),
     }
 
-    broadcast_on_commit("admin_dashboard", EventTypes.NEW_LEAD, payload)
-    broadcast_on_commit("admin_dashboard", EventTypes.DASHBOARD_STATS_UPDATED, {})
+    broadcast_on_commit(f"organization_{lead.organization_id}", EventTypes.NEW_LEAD, payload)
+    broadcast_on_commit(f"organization_{lead.organization_id}", EventTypes.DASHBOARD_STATS_UPDATED, {})
 
 
 def broadcast_lead_updated(lead) -> None:
@@ -206,9 +206,9 @@ def broadcast_lead_updated(lead) -> None:
         "updated_at": lead.updated_at.isoformat() if lead.updated_at else timezone.now().isoformat(),
     }
 
-    broadcast_on_commit("admin_dashboard", EventTypes.LEAD_UPDATED, payload)
+    broadcast_on_commit(f"organization_{lead.organization_id}", EventTypes.LEAD_UPDATED, payload)
     broadcast_on_commit(f"lead_{lead.id}", EventTypes.LEAD_UPDATED, payload)
-    broadcast_on_commit("admin_dashboard", EventTypes.DASHBOARD_STATS_UPDATED, {})
+    broadcast_on_commit(f"organization_{lead.organization_id}", EventTypes.DASHBOARD_STATS_UPDATED, {})
 
 
 def broadcast_booking_created(booking) -> None:
@@ -228,8 +228,8 @@ def broadcast_booking_created(booking) -> None:
         "created_at": booking.created_at.isoformat() if booking.created_at else timezone.now().isoformat(),
     }
 
-    broadcast_on_commit("admin_dashboard", EventTypes.BOOKING_CREATED, payload)
-    broadcast_on_commit("admin_dashboard", EventTypes.DASHBOARD_STATS_UPDATED, {})
+    broadcast_on_commit(f"organization_{booking.customer.organization_id}", EventTypes.BOOKING_CREATED, payload)
+    broadcast_on_commit(f"organization_{booking.customer.organization_id}", EventTypes.DASHBOARD_STATS_UPDATED, {})
 
 
 def broadcast_booking_updated(booking) -> None:
@@ -242,12 +242,12 @@ def broadcast_booking_updated(booking) -> None:
         "updated_at": booking.updated_at.isoformat() if booking.updated_at else timezone.now().isoformat(),
     }
 
-    broadcast_on_commit("admin_dashboard", EventTypes.BOOKING_UPDATED, payload)
-    broadcast_on_commit("admin_dashboard", EventTypes.DASHBOARD_STATS_UPDATED, {})
+    broadcast_on_commit(f"organization_{booking.customer.organization_id}", EventTypes.BOOKING_UPDATED, payload)
+    broadcast_on_commit(f"organization_{booking.customer.organization_id}", EventTypes.DASHBOARD_STATS_UPDATED, {})
 
 
-def broadcast_dashboard_stats_updated() -> None:
+def broadcast_dashboard_stats_updated(organization_id=None) -> None:
     """
     Broadcasts notification that dashboard metrics have updated.
     """
-    broadcast_on_commit("admin_dashboard", EventTypes.DASHBOARD_STATS_UPDATED, {})
+    broadcast_on_commit(f"organization_{organization_id}", EventTypes.DASHBOARD_STATS_UPDATED, {})
