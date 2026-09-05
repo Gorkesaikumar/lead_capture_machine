@@ -7,6 +7,7 @@ import { RealtimeProvider } from './contexts/RealtimeContext';
 import { Loader2 } from 'lucide-react';
 import AppShell from './layouts/AppShell';
 import ProtectedRoute from './components/common/ProtectedRoute';
+import PrivacyPolicy from './features/legal/PrivacyPolicy';
 
 const HomePage = React.lazy(() => import('./features/marketing/HomePage'));
 const Login = React.lazy(() => import('./features/auth/Login'));
@@ -64,12 +65,11 @@ const queryClient = new QueryClient({
   },
 });
 
-function App() {
+function PlatformApp() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <RealtimeProvider>
-          <BrowserRouter>
             <Suspense fallback={<div className="flex h-screen w-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-slate-400" /></div>}>
               <Routes>
                 <Route path="/" element={<HomePage />} />
@@ -139,11 +139,22 @@ function App() {
                 </Route>
               </Routes>
             </Suspense>
-          </BrowserRouter>
           <Toaster position="bottom-right" />
         </RealtimeProvider>
       </AuthProvider>
     </QueryClientProvider>
+  );
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Public legal content must never mount session restoration or authenticated sockets. */}
+        <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+        <Route path="*" element={<PlatformApp />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 

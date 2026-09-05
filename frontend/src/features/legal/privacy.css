@@ -1,0 +1,11 @@
+.privacy-page { color-scheme: light; overflow-wrap: anywhere; }
+.privacy-page a:focus-visible { outline: 2px solid #bb003b; outline-offset: 4px; border-radius: 2px; }
+.privacy-skip { position: absolute; left: 1rem; top: -5rem; z-index: 100; background: white; padding: .75rem 1rem; color: #0f172a; }
+.privacy-skip:focus { top: 1rem; }
+@media print {
+  .privacy-page header nav, .privacy-page aside, .privacy-page footer, .privacy-skip { display: none; }
+  .privacy-page main { padding: 0; max-width: none; }
+  .privacy-page main > div { display: block; }
+  .privacy-page article { max-width: none; }
+  .privacy-page h2 { break-after: avoid; }
+}
