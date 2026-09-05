@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "./AuthContext";
@@ -27,25 +27,15 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
   const [lastEvent, setLastEvent] = useState<RealtimeEvent | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const pingIntervalRef = useRef<number | null>(null);
+  const connectionCountRef = useRef(0);
+  const resumeRef = useRef<(() => void) | null>(null);
   const listenersRef = useRef<Map<string, Set<(payload: any, event: RealtimeEvent) => void>>>(new Map());
-
-  const getWsUrl = useCallback(() => {
-    const token = localStorage.getItem("authToken");
-    if (!token) return null;
-
-    if (import.meta.env.VITE_WS_BASE_URL) {
-      // Ensure there is no trailing slash on the base URL
-      const baseUrl = import.meta.env.VITE_WS_BASE_URL.replace(/\/$/, "");
-      return `${baseUrl}/admin/dashboard/?organization_id=${encodeURIComponent(localStorage.getItem("organizationId") || "")}`;
-    }
-
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    return `${protocol}//${host}/ws/admin/dashboard/?organization_id=${encodeURIComponent(localStorage.getItem("organizationId") || "")}`;
-  }, []);
+  // Depend on session identity, not the profile object's reference.
+  const userId = user?.id;
+  const organizationId = user?.workspace?.id;
+  // AuthContext publishes a new profile only after verifying the stored token.
+  // Do not adopt a login's pending token on an unrelated loading-state render.
+  const token = useMemo(() => user ? localStorage.getItem("authToken") : null, [user]);
 
   const dispatchEvent = useCallback((event: RealtimeEvent) => {
     setLastEvent(event);
@@ -56,8 +46,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       listeners.forEach((listener) => {
         try {
           listener(event.payload, event);
-        } catch (err) {
-          console.error(`Error in WebSocket listener for ${event.type}:`, err);
+        } catch {
+          console.error("[realtime] Event listener failed");
         }
       });
     }
@@ -68,8 +58,8 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       wildcardListeners.forEach((listener) => {
         try {
           listener(event.payload, event);
-        } catch (err) {
-          console.error(`Error in WebSocket wildcard listener:`, err);
+        } catch {
+          console.error("[realtime] Wildcard listener failed");
         }
       });
     }
@@ -161,114 +151,188 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
     }
   }, [queryClient]);
 
-  const connect = useCallback(() => {
-    if (!user?.workspace) {
-      setStatus("DISCONNECTED");
-      return;
-    }
+  useEffect(() => {
+    // All callbacks and timers belong to this session/organization generation.
+    let disposed = false;
+    let suspended = false;
+    let terminal = false;
+    let attempts = 0;
+    let reconnectTimer: number | null = null;
+    let heartbeatTimer: number | null = null;
+    let stableTimer: number | null = null;
+    let handshakeTimer: number | null = null;
+    setLastEvent(null);
+    setStatus("DISCONNECTED");
 
-    const wsUrl = getWsUrl();
-    if (!wsUrl) {
-      setStatus("DISCONNECTED");
-      return;
-    }
-
-    // Close existing socket if any
-    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
-      wsRef.current.close();
-    }
-
-    setStatus((prev) => (prev === "CONNECTED" ? "RECONNECTING" : "CONNECTING"));
-
-    try {
-      const socket = new WebSocket(wsUrl, ["v4", `token.${localStorage.getItem("authToken")}`]);
+    const sessionMatches = () => userId != null && !!organizationId && !!token
+      && localStorage.getItem("authToken") === token
+      && localStorage.getItem("organizationId") === organizationId;
+    const canConnect = () => !disposed && !suspended && !terminal
+      && navigator.onLine && sessionMatches();
+    // Never log URLs, protocols, tokens, organization IDs or message bodies.
+    const diagnostic = (event: string, detail: Record<string, string | number> = {}) => {
+      console.debug("[realtime]", event, { connection: connectionCountRef.current, attempt: attempts, ...detail });
+    };
+    const clearSocketTimers = () => {
+      if (heartbeatTimer !== null) window.clearInterval(heartbeatTimer);
+      if (stableTimer !== null) window.clearTimeout(stableTimer);
+      if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
+      heartbeatTimer = stableTimer = handshakeTimer = null;
+    };
+    const clearReconnect = () => {
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+    const detach = (socket: WebSocket) => {
+      socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+    };
+    const releaseSocket = (reason: string) => {
+      clearSocketTimers();
+      const socket = wsRef.current;
+      wsRef.current = null;
+      if (!socket) return;
+      detach(socket);
+      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+        socket.close(1000, reason);
+      }
+      diagnostic("disconnect", { reason });
+    };
+    const stop = (reason: string) => {
+      clearReconnect();
+      releaseSocket(reason);
+      if (!disposed) setStatus("DISCONNECTED");
+    };
+    const scheduleReconnect = () => {
+      if (!canConnect()) {
+        if (!disposed) setStatus("DISCONNECTED");
+        return;
+      }
+      if (reconnectTimer !== null) return;
+      // Cap the exponent too, so prolonged outages cannot overflow it.
+      const delay = Math.min(1000 * 2 ** Math.min(attempts, 5), 30000);
+      attempts += 1;
+      setStatus("RECONNECTING");
+      diagnostic("reconnect scheduled", { delayMs: delay });
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    };
+    const connect = () => {
+      if (!canConnect()) {
+        if (!disposed) setStatus("DISCONNECTED");
+        return;
+      }
+      const existing = wsRef.current;
+      if (existing && (existing.readyState === WebSocket.CONNECTING || existing.readyState === WebSocket.OPEN)) return;
+      clearReconnect();
+      setStatus(attempts > 0 ? "RECONNECTING" : "CONNECTING");
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const base = import.meta.env.VITE_WS_BASE_URL?.replace(/\/$/, "")
+        || `${protocol}//${window.location.host}/ws`;
+      const wsUrl = `${base}/admin/dashboard/?organization_id=${encodeURIComponent(organizationId!)}`;
+      connectionCountRef.current += 1;
+      diagnostic("connect");
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(wsUrl, ["v4", `token.${token}`]);
+      } catch {
+        diagnostic("creation failed");
+        scheduleReconnect();
+        return;
+      }
       wsRef.current = socket;
-
+      const isCurrent = () => !disposed && wsRef.current === socket;
+      // Bound stalled handshakes; browser CONNECTING must not last indefinitely.
+      handshakeTimer = window.setTimeout(() => {
+        if (!isCurrent()) return;
+        releaseSocket("Connection timeout");
+        scheduleReconnect();
+      }, 15000);
       socket.onopen = () => {
+        if (!isCurrent()) return;
+        if (!canConnect()) { stop("Session unavailable"); return; }
+        if (handshakeTimer !== null) window.clearTimeout(handshakeTimer);
+        handshakeTimer = null;
         setStatus("CONNECTED");
-        reconnectAttemptsRef.current = 0;
-
-        // Start heartbeat ping every 30s
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-        pingIntervalRef.current = window.setInterval(() => {
+        diagnostic("connected");
+        // A briefly OPEN socket must not reset backoff during a server outage.
+        stableTimer = window.setTimeout(() => {
+          stableTimer = null;
+          if (isCurrent() && canConnect() && socket.readyState === WebSocket.OPEN) {
+            attempts = 0;
+            diagnostic("stable");
+          }
+        }, 30000);
+        heartbeatTimer = window.setInterval(() => {
+          if (!isCurrent()) return;
+          if (!canConnect()) { stop("Session unavailable"); return; }
           if (socket.readyState === WebSocket.OPEN) {
-            socket.send(JSON.stringify({ type: "ping" }));
+            try { socket.send(JSON.stringify({ type: "ping" })); }
+            catch { releaseSocket("Heartbeat send failed"); scheduleReconnect(); }
           }
         }, 30000);
       };
-
       socket.onmessage = (event) => {
+        if (!isCurrent()) return;
+        if (!canConnect()) { stop("Session unavailable"); return; }
         try {
           const data = JSON.parse(event.data);
-          if (data.type === "PONG" || data.type === "CONNECTION_ESTABLISHED") {
-            return;
+          if (data?.type === "PONG" || data?.type === "CONNECTION_ESTABLISHED") return;
+          if (typeof data?.type === "string") {
+            dispatchEvent({ type: data.type, payload: data.payload || {}, timestamp: data.timestamp || new Date().toISOString() });
           }
-          if (data.type) {
-            dispatchEvent({
-              type: data.type,
-              payload: data.payload || {},
-              timestamp: data.timestamp || new Date().toISOString(),
-            });
-          }
-        } catch (err) {
-          console.error("Failed to parse WebSocket message:", err, event.data);
+        } catch {
+          diagnostic("invalid message");
         }
       };
-
-      socket.onerror = (err) => {
-        console.warn("WebSocket connection error:", err);
-      };
-
+      // Browsers follow errors with close; only close schedules a retry.
+      socket.onerror = () => { if (isCurrent()) diagnostic("transport error"); };
       socket.onclose = (event) => {
-        // Ignore sockets closed by effect cleanup or replaced by a new connection.
-        if (wsRef.current !== socket) return;
-        if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
+        if (!isCurrent()) return;
+        clearSocketTimers();
+        detach(socket);
         wsRef.current = null;
-
-        // If user is still logged in and socket was not closed cleanly due to logout or auth rejection
-        if (user?.workspace && event.code !== 1000 && event.code !== 4001 && event.code !== 4003 && event.code !== 4403) {
-          setStatus("RECONNECTING");
-          const nextAttempt = reconnectAttemptsRef.current + 1;
-          reconnectAttemptsRef.current = nextAttempt;
-          console.log(`WebSocket reconnecting, attempt: ${nextAttempt} (close code: ${event.code})`);
-          
-          // Exponential backoff with jitter: 1s, 2s, 4s, 8s ... max 30s
-          const delay = Math.min(1000 * Math.pow(1.5, nextAttempt) + Math.random() * 500, 30000);
-
-          if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = window.setTimeout(() => {
-            connect();
-          }, delay);
-        } else {
-          setStatus("DISCONNECTED");
-        }
+        diagnostic("disconnected", { code: event.code });
+        terminal = [1000, 1008, 4001, 4003, 4401, 4403].includes(event.code);
+        if (terminal) setStatus("DISCONNECTED");
+        else scheduleReconnect();
       };
-    } catch (err) {
-      console.error("Failed to create WebSocket instance:", err);
-      setStatus("DISCONNECTED");
-    }
-  }, [user, getWsUrl, dispatchEvent]);
-
-  useEffect(() => {
-    if (user?.workspace) {
-      connect();
-    } else {
-      if (wsRef.current) {
-        wsRef.current.close(1000, "User logged out");
-        wsRef.current = null;
-      }
-      setStatus("DISCONNECTED");
-    }
-
-    return () => {
-      if (pingIntervalRef.current) clearInterval(pingIntervalRef.current);
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (wsRef.current) {
-        wsRef.current.close(1000, "Unmounted");
-        wsRef.current = null;
+    };
+    const onOffline = () => stop("Browser offline");
+    const onOnline = () => {
+      if (canConnect() && reconnectTimer === null) connect();
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === "authToken" || event.key === "organizationId") {
+        if (!sessionMatches()) {
+          // Another tab changed identity. Wait for AuthContext to authenticate it.
+          suspended = true;
+          stop("Session changed");
+        }
       }
     };
-  }, [user, connect]);
+    resumeRef.current = () => {
+      suspended = false;
+      onOnline();
+    };
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("storage", onStorage);
+    connect();
+    return () => {
+      disposed = true;
+      resumeRef.current = null;
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("storage", onStorage);
+      stop("Session cleanup");
+    };
+  }, [userId, organizationId, token, dispatchEvent]);
+
+  // A verified profile refresh can restore temporarily cleared login storage.
+  // Resume a stopped connection, retaining healthy sockets and pending backoff.
+  useEffect(() => { resumeRef.current?.(); }, [user]);
 
   const subscribe = useCallback((eventType: string, handler: (payload: any, event: RealtimeEvent) => void) => {
     if (!listenersRef.current.has(eventType)) {
