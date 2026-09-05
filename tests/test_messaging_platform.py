@@ -67,6 +67,9 @@ def receive(data, channel):
 @pytest.mark.parametrize("channel", ["INSTAGRAM", "WHATSAPP"])
 @pytest.mark.parametrize("trigger", ["EXACT", "NEW_LEAD", "NEW_CONVERSATION"])
 def test_complete_inbound_capture_automation_outbound(workspace, channel, trigger, django_capture_on_commit_callbacks):
+    if channel == "INSTAGRAM":
+        # Instagram now requires keyword intent before NEW_LEAD/tag/status automations.
+        LeadTrigger.objects.create(organization=workspace, phrase="price", match_type="CONTAINS")
     rule = Automation.objects.create(organization=workspace, name="Pricing", channel=channel, trigger_type=trigger, trigger_value="price", enabled=True)
     AutomationAction.objects.create(automation=rule, action_type="ADD_TAG", action_order=0, configuration={"tag": "Pricing"})
     AutomationAction.objects.create(automation=rule, action_type="CHANGE_STATUS", action_order=1, configuration={"status": "QUALIFIED"})

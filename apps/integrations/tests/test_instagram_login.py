@@ -58,6 +58,7 @@ def test_professional_identity_comes_from_me_not_oauth(owner, settings, id_field
     assert config.metadata["destination_id"] == professional_id
     assert config.metadata["account_id"] == professional_id
     assert config.metadata["oauth_user_id"] == oauth_id
+    assert config.metadata["profile_id"] == profile["id"]
     assert config.metadata["username"] == "mybusiness"
     assert config.metadata["name"] == profile["name"]
     assert config.metadata["profile_picture_url"] == profile["profile_picture_url"]
@@ -74,6 +75,24 @@ def test_invalid_professional_id_never_subscribes(owner, professional_id):
         assert "error=no_instagram_account" in ig_callback(state).url
     assert post.call_count == 1
     assert not IntegrationConfig.objects.exists()
+
+
+@pytest.mark.parametrize("collision", ["account_id", "profile_id"])
+def test_new_connection_rejects_alias_already_owned_by_another_workspace(owner, collision):
+    from apps.organizations.models import Organization
+    other = Organization.objects.create(name="Other aliases", slug="other-aliases", owner=owner[0])
+    IntegrationConfig.objects.create(organization=other, provider="INSTAGRAM", metadata={
+        "destination_id": "17841405962987654", collision: "17841405962012345", "auth_architecture": "instagram_login"})
+    state = ig_start(owner)
+    def get(url, **kwargs):
+        if url.endswith("/me"):
+            return response({"user_id": "17841405962012345", "id": "72500123456789012", "username": "studio"})
+        return ig_get(url, **kwargs)
+    with patch("requests.get", side_effect=get), patch("requests.post", side_effect=ig_post) as post:
+        result = ig_callback(state)
+    assert "error=account_already_connected_to_another_workspace" in result.url
+    assert post.call_count == 1  # No subscription or replacement of another tenant's connection.
+    assert IntegrationConfig.objects.count() == 1
 
 
 @pytest.mark.parametrize("other_workspace", [True, False])

@@ -234,11 +234,11 @@ class InstagramOutboundRegressionTests(TestCase):
         payload = {
             "object": "instagram",
             "entry": [{
-                "id": "PAGE_123",
+                "id": "17841405962012345",
                 "time": 1723145678,
                 "messaging": [{
                     "sender": {"id": REAL_IGSID},
-                    "recipient": {"id": "BUSINESS_PAGE_123"},
+                    "recipient": {"id": "17841405962012345"},
                     "timestamp": 1723145678,
                     "message": {
                         "mid": "real_mid_abc123",

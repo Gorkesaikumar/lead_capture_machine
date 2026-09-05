@@ -142,8 +142,18 @@ class InboundPipelineService:
         if not parser:
             return {**counts, "notes": "Unsupported object type"}
 
-        def resolve(channel, destination):
-            configs = list(IntegrationConfig.objects.select_for_update(of=("self",)).filter(provider=channel, metadata__destination_id=destination, is_active=True, organization__is_active=True, organization__is_deleted=False).select_related("organization")[:2])
+        def resolve(channel, destination, aliases=(), sender_id=None):
+            if channel == "INSTAGRAM":
+                from apps.integrations.meta.instagram.identity import matching_configs
+                query = matching_configs((destination, *aliases))
+            else:
+                query = IntegrationConfig.objects.filter(provider=channel, metadata__destination_id=destination,
+                    is_active=True, organization__is_active=True, organization__is_deleted=False)
+            configs = list(query.select_for_update(of=("self",)).select_related("organization"))
+            if channel == "INSTAGRAM":
+                logger.info("instagram_destination_resolved", extra={"stage": "instagram_destination_resolved",
+                    "raw_event_id": str(raw_event.pk), "destination_id": destination,
+                    "destination_aliases": aliases, "sender_id": sender_id, "resolution_matches": len(configs)})
             if len(configs) != 1:
                 raise ValueError("Webhook destination is unconfigured or assigned to multiple workspaces.")
             config = configs[0]
@@ -178,7 +188,11 @@ class InboundPipelineService:
                             transaction.on_commit(lambda m=msg: broadcast_message_updated(m))
 
         for normalized in parser.parse_messages(payload):
-            org = resolve(normalized.channel, normalized.destination_id)
+            if normalized.channel == "INSTAGRAM":
+                logger.info("instagram_message_normalized", extra={"stage": "instagram_message_normalized",
+                    "raw_event_id": str(raw_event.pk), "destination_id": normalized.destination_id,
+                    "sender_id": normalized.external_user_id})
+            org = resolve(normalized.channel, normalized.destination_id, normalized.destination_aliases, normalized.external_user_id)
             message, created = ConversationService.store_inbound_message(normalized.to_service_dict(), organization=org, plog=plog)
             counts["messages_processed"] += 1
             if not created:
@@ -188,7 +202,8 @@ class InboundPipelineService:
             from apps.customers.models import Customer
             Customer.objects.select_for_update().get(pk=message.conversation.customer_id)
             lead, lead_created, trigger = LeadDetectionService.process_inbound_message(message, plog=plog)
-            if not lead:
+            # Instagram leads require keyword intent; WhatsApp retains its existing capture-all policy.
+            if not lead and normalized.channel != "INSTAGRAM":
                 lead, lead_created = capture_message_lead(message)
             if lead_created:
                 counts["leads_created"] += 1

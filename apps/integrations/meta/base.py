@@ -5,7 +5,7 @@ Provides provider-independent data contracts and interfaces.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,8 @@ class NormalizedInboundMessage:
     attachments: List[Dict[str, Any]] = field(default_factory=list)
     provider_timestamp: Optional[datetime] = None
     raw_metadata: Dict[str, Any] = field(default_factory=dict)
+    # Additional account-scoped envelope identity (Instagram entry.id), never sender.id.
+    destination_aliases: Tuple[str, ...] = ()
 
     def to_service_dict(self) -> Dict[str, Any]:
         """

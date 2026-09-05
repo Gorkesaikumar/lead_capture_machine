@@ -7,6 +7,7 @@ from datetime import datetime, timezone as dt_timezone
 import logging
 from typing import Any, Dict, List, Optional
 from apps.integrations.meta.base import InboundMessageParser, NormalizedInboundMessage
+from .identity import account_id
 
 logger = logging.getLogger("apps.integrations.meta.instagram")
 
@@ -35,6 +36,21 @@ class InstagramInboundParser(InboundMessageParser):
             if isinstance(first, dict) and ("messaging" in first or "changes" in first):
                 return True
         return False
+
+    @staticmethod
+    def destination_identity(payload, entry, event):
+        """Inbound recipient is the Professional account; Instagram entry.id is its envelope ID.
+
+        Generic value.id/metadata and Facebook Page entry IDs are not IG account proof.
+        An explicit malformed recipient must not be rescued by another field.
+        """
+        recipient = event.get("recipient") or {}
+        raw_recipient = recipient.get("id") if isinstance(recipient, dict) else None
+        recipient_id = account_id(raw_recipient)
+        if raw_recipient not in (None, "") and not recipient_id:
+            raise ValueError("Invalid Instagram webhook recipient identifier.")
+        entry_id = account_id(entry.get("id")) if payload.get("object") == "instagram" else ""
+        return recipient_id or entry_id, tuple(value for value in (entry_id,) if value and value != recipient_id)
 
     @staticmethod
     def _parse_timestamp(raw_ts: Any) -> datetime:
@@ -102,14 +118,8 @@ class InstagramInboundParser(InboundMessageParser):
                         continue
 
                     sender = event.get("sender", {})
-                    recipient = event.get("recipient", {})
                     sender_id = str(sender.get("id", "")).strip()
-                    recipient_id = str(recipient.get("id") or entry.get("id") or "").strip()
-                    
-                    logger.info(
-                        "[DIAGNOSTIC] Parsed INSTAGRAM standard message. sender.id=%s recipient.id=%s mid=%s",
-                        sender_id, recipient_id, message_obj.get("mid", "")
-                    )
+                    recipient_id, destination_aliases = self.destination_identity(payload, entry, event)
 
                     if not sender_id:
                         continue
@@ -162,6 +172,7 @@ class InstagramInboundParser(InboundMessageParser):
                         attachments=attachments_list,
                         provider_timestamp=provider_ts,
                         raw_metadata=event,
+                        destination_aliases=destination_aliases,
                     )
                     normalized_messages.append(norm_msg)
 
@@ -177,16 +188,12 @@ class InstagramInboundParser(InboundMessageParser):
                         message_obj = value.get("message", {})
                         if not message_obj:
                             continue
+                        if message_obj.get("is_echo", False):
+                            continue
                             
                         sender = value.get("sender", {})
-                        recipient = value.get("recipient", {})
                         sender_id = str(sender.get("id", "")).strip()
-                        recipient_id = str(recipient.get("id") or entry.get("id") or "").strip()
-                        
-                        logger.info(
-                            "[DIAGNOSTIC] Parsed INSTAGRAM changes array message. sender.id=%s recipient.id=%s mid=%s",
-                            sender_id, recipient_id, message_obj.get("mid", "")
-                        )
+                        recipient_id, destination_aliases = self.destination_identity(payload, entry, value)
                         
                         if not sender_id:
                             continue
@@ -209,6 +216,7 @@ class InstagramInboundParser(InboundMessageParser):
                             attachments=[],
                             provider_timestamp=provider_ts,
                             raw_metadata=value,
+                            destination_aliases=destination_aliases,
                         )
                         normalized_messages.append(norm_msg)
 

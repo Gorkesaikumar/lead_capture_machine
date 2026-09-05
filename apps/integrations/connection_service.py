@@ -157,10 +157,16 @@ def require_scopes(scopes, provider):
         raise OAuthFailure("permission_required")
 
 
-def assert_available(organization, provider, destination):
+def assert_available(organization, provider, destination, aliases=()):
     with connection.cursor() as cursor:
-        cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [f"{provider}:{destination}"])
-    if IntegrationConfig.objects.filter(provider=provider, is_active=True, metadata__destination_id=destination).exclude(organization=organization).exists():
+        for identifier in sorted({destination, *aliases} - {""}):
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [f"{provider}:{identifier}"])
+    if provider == "INSTAGRAM":
+        from apps.integrations.meta.instagram.identity import matching_configs
+        matches = matching_configs((destination, *aliases))
+    else:
+        matches = IntegrationConfig.objects.filter(provider=provider, is_active=True, metadata__destination_id=destination)
+    if matches.exclude(organization=organization).exists():
         raise OAuthFailure("account_already_connected_to_another_workspace")
     current = IntegrationConfig.objects.filter(provider=provider, organization=organization, is_active=True).first()
     if current and current.metadata.get("destination_id") not in (None, destination):
@@ -218,19 +224,23 @@ def instagram_connect(organization, code, redirect_uri, user=None):
     profile = meta_request("get", f"{base}/me", token, failure="no_instagram_account",
         params={"fields": "id,user_id,username,name,profile_picture_url"})
     professional_account_id = str(profile.get("user_id") or profile.get("id") or "")
+    from apps.integrations.meta.instagram.identity import account_id
+    profile_id = account_id(profile.get("id"))
     if (not isinstance(profile.get("username"), str) or not profile["username"].strip()
             or not re.fullmatch(r"[1-9][0-9]{0,31}", professional_account_id)):
         raise OAuthFailure("no_instagram_account")
     with transaction.atomic():
         list(IntegrationConfig.objects.select_for_update().filter(organization=organization, provider="INSTAGRAM"))
         Organization.objects.select_for_update().get(pk=organization.pk)
-        assert_available(organization, "INSTAGRAM", professional_account_id)
+        assert_available(organization, "INSTAGRAM", professional_account_id, aliases=(profile_id,))
         subscribed = meta_request("post", f"{base}/{professional_account_id}/subscribed_apps", token, failure="webhook_subscription_failed",
             data={"subscribed_fields": "messages,messaging_seen"})
         if subscribed.get("success") not in (True, "true"):
             raise OAuthFailure("webhook_subscription_failed")
         return save_connection(organization, user, "INSTAGRAM", token, {
             "destination_id": professional_account_id, "account_id": professional_account_id,
+            # Both IDs originate from the same authenticated /me response, not webhook guesses.
+            "profile_id": profile_id,
             "oauth_user_id": oauth_user_id, "username": profile["username"].strip(), "name": profile.get("name", ""),
             "profile_picture_url": profile.get("profile_picture_url", ""), "scopes": scopes,
             "requested_scopes": list(SCOPES["INSTAGRAM"]),

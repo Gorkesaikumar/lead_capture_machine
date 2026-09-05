@@ -47,7 +47,7 @@ class InstagramWebhookIntegrationTests(TestCase):
             organization=self.org,
             provider="INSTAGRAM",
             is_active=True,
-            metadata={"destination_id": "ig_page_999"}
+            metadata={"destination_id": "17841405962012345"}
         )
 
         # Setup test photography service and trigger
@@ -134,12 +134,12 @@ class InstagramWebhookIntegrationTests(TestCase):
             "object": "instagram",
             "entry": [
                 {
-                    "id": "ig_page_999",
+                    "id": "17841405962012345",
                     "time": 1723145678000,
                     "messaging": [
                         {
                             "sender": {"id": ig_user_id},
-                            "recipient": {"id": "ig_page_999"},
+                            "recipient": {"id": "17841405962012345"},
                             "timestamp": 1723145678000,
                             "message": {
                                 "mid": mid,
@@ -243,12 +243,12 @@ class InstagramWebhookIntegrationTests(TestCase):
             "object": "instagram",
             "entry": [
                 {
-                    "id": "ig_page_999",
+                    "id": "17841405962012345",
                     "time": 1723145678000,
                     "messaging": [
                         {
                             "sender": {"id": ig_user_id},
-                            "recipient": {"id": "ig_page_999"},
+                            "recipient": {"id": "17841405962012345"},
                             "timestamp": 1723145678000,
                             "message": {
                                 "mid": "mid_1003_dup",
@@ -495,12 +495,12 @@ class InstagramWebhookIntegrationTests(TestCase):
             "object": "instagram",
             "entry": [
                 {
-                    "id": "ig_page_999",
+                    "id": "17841405962012345",
                     "time": 1723145678000,
                     "messaging": [
                         {
                             "sender": {"id": ig_user_id},
-                            "recipient": {"id": "ig_page_999"},
+                            "recipient": {"id": "17841405962012345"},
                             "timestamp": 1723145678000,
                             "message": {
                                 "mid": mid,
