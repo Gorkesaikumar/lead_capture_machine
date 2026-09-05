@@ -35,12 +35,16 @@ export default function AnalyticsDashboard() {
     );
   }
 
-  const { leads, bookings, lead_source_breakdown, popular_services, timeseries } = data;
+  const leads = data?.leads || { total_leads: 0, new_leads_today: 0, converted_leads: 0, lead_to_booking_conversion_rate: 0 };
+  const bookings = data?.bookings || { total_bookings: 0, upcoming_bookings: 0, cancelled_bookings: 0 };
+  const lead_source_breakdown = Array.isArray(data?.lead_source_breakdown) ? data.lead_source_breakdown : [];
+  const popular_services = Array.isArray(data?.popular_services) ? data.popular_services : [];
+  const timeseries = Array.isArray(data?.timeseries) ? data.timeseries : [];
 
-  const formattedTimeseries = timeseries?.map((t: any) => ({
+  const formattedTimeseries = timeseries.map((t: any) => ({
     ...t,
-    displayDate: format(parseISO(t.date), "MMM d"),
-  })) || [];
+    displayDate: t?.date && parseISO(t.date) ? format(parseISO(t.date), "MMM d") : (t?.date || ""),
+  }));
 
   return (
     <PageContainer>

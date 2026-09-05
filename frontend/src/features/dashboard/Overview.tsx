@@ -166,25 +166,25 @@ export default function Overview() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <DashboardKpiCard
                 title="Total Leads"
-                value={summary.leads.total_leads}
+                value={summary.leads?.total_leads ?? 0}
                 icon={Users}
                 colorScheme="pink"
               />
               <DashboardKpiCard
                 title="New Leads Today"
-                value={summary.leads.new_leads_today}
+                value={summary.leads?.new_leads_today ?? 0}
                 icon={UserPlus}
                 colorScheme="green"
               />
               <DashboardKpiCard
                 title="Open Conversations"
-                value={summary.leads.open_conversations}
+                value={summary.leads?.open_conversations ?? 0}
                 icon={MessageSquare}
                 colorScheme="orange"
               />
               <DashboardKpiCard
                 title="Conversion Rate"
-                value={`${summary.leads.lead_to_booking_conversion_rate}%`}
+                value={`${summary.leads?.lead_to_booking_conversion_rate ?? 0}%`}
                 icon={Target}
                 colorScheme="purple"
               />
@@ -196,17 +196,17 @@ export default function Overview() {
                 <LeadsTimeseriesChart data={summary?.leads_timeseries || []} />
               </div>
               <div className="lg:col-span-1">
-                <ChannelStatusCard channels={summary.channels} />
+                <ChannelStatusCard channels={summary?.channels || []} />
               </div>
             </div>
 
             {/* Row 3: Recent Leads (1 Col) & Activity Feed (1 Col) */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div className="lg:col-span-1">
-                <RecentLeadsTable leads={summary.recent_leads} />
+                <RecentLeadsTable leads={summary?.recent_leads || []} />
               </div>
               <div className="lg:col-span-1">
-                <ActivityFeedCard activities={summary.activities} />
+                <ActivityFeedCard activities={summary?.activities || []} />
               </div>
             </div>
           </div>

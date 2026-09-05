@@ -1,13 +1,25 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-export function SourceBreakdownChart({ data }: { data: any[] }) {
-  if (!data || data.length === 0) return null;
+export function SourceBreakdownChart({ data = [] }: { data?: any[] }) {
+  const safeData = Array.isArray(data) ? data : [];
+  if (safeData.length === 0) {
+    return (
+      <Card className="border-gray-200 shadow-none">
+        <CardHeader className="pb-2 border-b border-gray-100">
+          <CardTitle className="text-base font-semibold text-slate-900">Lead Sources</CardTitle>
+        </CardHeader>
+        <CardContent className="p-6 text-center text-xs text-slate-500 font-medium">
+          No lead source breakdown available in this period.
+        </CardContent>
+      </Card>
+    );
+  }
 
-  const chartData = data.map(item => ({
-    name: item.source_channel === 'INSTAGRAM' ? 'Instagram' : item.source_channel === 'WHATSAPP' ? 'WhatsApp' : 'Website',
-    leads: item.total_leads,
-    color: item.source_channel === 'INSTAGRAM' ? '#db2777' : item.source_channel === 'WHATSAPP' ? '#16a34a' : '#475569'
+  const chartData = safeData.map(item => ({
+    name: item?.source_channel === 'INSTAGRAM' ? 'Instagram' : item?.source_channel === 'WHATSAPP' ? 'WhatsApp' : 'Website',
+    leads: item?.total_leads || 0,
+    color: item?.source_channel === 'INSTAGRAM' ? '#db2777' : item?.source_channel === 'WHATSAPP' ? '#16a34a' : '#475569'
   }));
 
   return (

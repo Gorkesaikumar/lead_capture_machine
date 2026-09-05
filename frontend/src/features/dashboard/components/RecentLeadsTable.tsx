@@ -5,17 +5,18 @@ import { cn } from "@/utils/cn";
 
 interface Lead {
   id: string;
-  customer: { display_name: string; email?: string };
-  source_channel: string;
+  customer?: { display_name?: string; email?: string };
+  source_channel?: string;
   summary?: string;
-  created_at: string;
+  created_at?: string;
 }
 
-export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
+export function RecentLeadsTable({ leads = [] }: { leads?: Lead[] }) {
   const navigate = useNavigate();
-  const displayLeads = leads.slice(0, 5);
+  const safeLeads = Array.isArray(leads) ? leads : [];
+  const displayLeads = safeLeads.slice(0, 5);
 
-  const getInitials = (name: string) => {
+  const getInitials = (name?: string) => {
     if (!name) return "L";
     const parts = name.trim().split(" ");
     return parts.length >= 2
@@ -34,7 +35,7 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
     return colors[idx % colors.length];
   };
 
-  const getSourceBadge = (source: string) => {
+  const getSourceBadge = (source?: string) => {
     const src = (source || "").toLowerCase();
     if (src.includes("insta")) {
       return (
@@ -57,7 +58,8 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
     );
   };
 
-  const formatTime = (dateStr: string) => {
+  const formatTime = (dateStr?: string) => {
+    if (!dateStr) return "Time unavailable";
     try {
       const parsed = parseISO(dateStr);
       if (isValid(parsed)) {
@@ -102,15 +104,15 @@ export function RecentLeadsTable({ leads }: { leads: Lead[] }) {
                   getAvatarColor(idx)
                 )}
               >
-                {getInitials(lead.customer.display_name)}
+                {getInitials(lead.customer?.display_name)}
               </div>
 
               <div className="min-w-0">
                 <h4 className="text-xs font-bold text-slate-900 group-hover:text-rose-600 transition-colors truncate">
-                  {lead.customer.display_name}
+                  {lead.customer?.display_name || "Lead"}
                 </h4>
                 <p className="text-[11px] font-medium text-slate-500 truncate max-w-[160px] sm:max-w-[200px]">
-                  {lead.summary || lead.customer.email || "No summary provided"}
+                  {lead.summary || lead.customer?.email || "No summary provided"}
                 </p>
               </div>
             </div>

@@ -1,10 +1,11 @@
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { format, parseISO, isValid } from "date-fns";
 
-export function LeadsTimeseriesChart({ data }: { data: any[] }) {
-  const chartData = data.map((item) => ({
+export function LeadsTimeseriesChart({ data = [] }: { data?: any[] }) {
+  const safeData = Array.isArray(data) ? data : [];
+  const chartData = safeData.map((item) => ({
     ...item,
-    date: isValid(parseISO(item.date)) ? format(parseISO(item.date), "MMM d") : item.date,
+    date: item?.date && isValid(parseISO(item.date)) ? format(parseISO(item.date), "MMM d") : (item?.date || ""),
   }));
 
   return (

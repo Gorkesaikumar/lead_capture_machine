@@ -76,13 +76,43 @@ function summary(total = 0) {
     await page.screenshot({ path: path.join(artifacts, 'mobile.png'), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
+    // Test API Failure (503 Service Unavailable)
     failure = true;
     await page.getByLabel('Dashboard date range').selectOption('today');
     await page.clock.runFor(10_000);
     await expect(page.getByText('Failed to load dashboard', { exact: true })).toBeVisible();
     await expect(page.getByText('No leads in this period.', { exact: true })).toHaveCount(0);
     await expect(page.getByText('1,248', { exact: true })).toHaveCount(0);
+
+    // Test recovery with production Django HTTP 200 response shape (without channels/recent_leads/activities)
+    failure = false;
+    current = {
+      date_range: { preset: "this_month", start: "2026-09-01T00:00:00Z", end: "2026-09-30T23:59:59Z" },
+      leads: {
+        total_leads: 0, new_leads_today: 0, instagram_leads: 0, whatsapp_leads: 0, website_leads: 0,
+        open_conversations: 0, qualified_leads: 0, booking_links_sent: 0, converted_leads: 0,
+        lead_to_booking_conversion_rate: 0.0, status_new: 0, status_contacted: 0, status_qualified: 0, status_lost: 0,
+      },
+      bookings: {
+        total_bookings: 0, bookings_today: 0, bookings_tomorrow: 0, upcoming_bookings: 0, completed_bookings: 0,
+        cancelled_bookings: 0, confirmed_bookings: 0, pending_bookings: 0, no_show_bookings: 0,
+      },
+      lead_source_breakdown: [], popular_services: [], timeseries: [], leads_timeseries: [],
+    };
+    await page.getByRole('button', { name: 'Try Again' }).click();
+    await page.clock.runFor(5_000);
+    await expect(page.getByText('Failed to load dashboard', { exact: true })).toHaveCount(0);
+    await expect(kpi('Total Leads')).toHaveText('0');
+    await expect(kpi('Open Conversations')).toHaveText('0');
+    await expect(kpi('Conversion Rate')).toHaveText('0%');
+
+    // Test malformed response payload (causes retryable error)
+    current = null;
+    await page.getByLabel('Dashboard date range').selectOption('30d');
+    await page.clock.runFor(5_000);
+    await expect(page.getByText('Failed to load dashboard', { exact: true })).toBeVisible();
+
     expect(errors).toEqual([]);
-    console.log('PASS: database zeros, saved names/activity, channel errors, date selection, WebSocket refresh, 30-second polling, mobile layout, and honest API failure.');
+    console.log('PASS: database zeros, production response contract, saved names/activity, channel errors, date selection, WebSocket refresh, 30-second polling, mobile layout, malformed payload, and honest API failure.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

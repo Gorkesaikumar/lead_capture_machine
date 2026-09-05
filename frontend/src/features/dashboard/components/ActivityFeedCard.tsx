@@ -13,10 +13,21 @@ export interface ActivityItem {
 }
 
 interface ActivityFeedCardProps {
-  activities: ActivityItem[];
+  activities?: ActivityItem[];
 }
 
-export function ActivityFeedCard({ activities }: ActivityFeedCardProps) {
+export function ActivityFeedCard({ activities = [] }: ActivityFeedCardProps) {
+  const safeActivities = Array.isArray(activities) ? activities : [];
+
+  const formatActivityTime = (dateStr?: string) => {
+    if (!dateStr) return "Just now";
+    try {
+      return formatDistanceToNow(parseISO(dateStr), { addSuffix: true });
+    } catch {
+      return "Just now";
+    }
+  };
+
   return (
     <div className="rounded-2xl bg-white p-5 border border-slate-200/80 shadow-2xs flex flex-col justify-between h-full">
       {/* Card Header */}
@@ -33,8 +44,8 @@ export function ActivityFeedCard({ activities }: ActivityFeedCardProps) {
 
       {/* Activity Items */}
       <div className="space-y-3 flex-1 flex flex-col justify-around">
-        {activities.length === 0 && <p className="text-sm text-slate-500 py-6">No recorded lead activity in this period.</p>}
-        {activities.map((item) => (
+        {safeActivities.length === 0 && <p className="text-sm text-slate-500 py-6">No recorded lead activity in this period.</p>}
+        {safeActivities.map((item) => (
           <div
             key={item.id}
             className="flex items-start justify-between p-2.5 rounded-xl hover:bg-slate-50/80 transition-colors border border-transparent hover:border-slate-100"
@@ -73,7 +84,7 @@ export function ActivityFeedCard({ activities }: ActivityFeedCardProps) {
 
             {/* Time Ago */}
             <span className="text-[11px] font-semibold text-slate-400 shrink-0 mt-0.5">
-              {formatDistanceToNow(parseISO(item.created_at), { addSuffix: true })}
+              {formatActivityTime(item.created_at)}
             </span>
           </div>
         ))}

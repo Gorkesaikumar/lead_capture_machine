@@ -30,7 +30,7 @@ export interface AnalyticsSummary {
     pending_bookings: number;
     no_show_bookings: number;
   };
-  lead_source_breakdown: Array<{
+  lead_source_breakdown?: Array<{
     source_channel: string;
     total_leads: number;
     share_percentage: number;
@@ -38,7 +38,7 @@ export interface AnalyticsSummary {
     converted_leads: number;
     conversion_rate_percentage: number;
   }>;
-  popular_services: Array<{
+  popular_services?: Array<{
     service_id: string;
     service_name: string;
     service_slug: string;
@@ -47,25 +47,50 @@ export interface AnalyticsSummary {
     share_percentage: number;
     estimated_revenue: number;
   }>;
-  timeseries: Array<{
+  timeseries?: Array<{
     date: string;
     total: number;
     completed?: number;
     cancelled?: number;
   }>;
-  leads_timeseries: Array<{
+  leads_timeseries?: Array<{
     date: string;
     total: number;
     converted?: number;
+    instagram?: number;
+    whatsapp?: number;
+    website?: number;
+    other?: number;
   }>;
+  channels?: Array<{
+    id: string;
+    name: string;
+    type: "instagram" | "whatsapp" | "website";
+    status: string;
+    leadCount: number;
+  }>;
+  recent_leads?: any[];
+  activities?: any[];
+  generated_at?: string;
+  timezone?: string;
 }
 
 export function useDashboardSummary(preset = "this_month") {
   return useQuery({
     queryKey: ["dashboard", "summary", preset],
     queryFn: async () => {
-      const { data } = await apiClient.get<AnalyticsSummary>(`/analytics/dashboard/?preset=${preset}`);
-      return data;
+      const { data } = await apiClient.get(`/analytics/dashboard/?preset=${preset}`);
+      const payload = data?.data && data?.leads ? data.data : (data?.dashboard || data);
+      return {
+        ...payload,
+        lead_source_breakdown: Array.isArray(payload?.lead_source_breakdown) ? payload.lead_source_breakdown : [],
+        popular_services: Array.isArray(payload?.popular_services) ? payload.popular_services : [],
+        timeseries: Array.isArray(payload?.timeseries) ? payload.timeseries : [],
+        leads_timeseries: Array.isArray(payload?.leads_timeseries) ? payload.leads_timeseries : [],
+        channels: Array.isArray(payload?.channels) ? payload.channels : [],
+        recent_leads: Array.isArray(payload?.recent_leads) ? payload.recent_leads : [],
+        activities: Array.isArray(payload?.activities) ? payload.activities : [],
+      } as AnalyticsSummary;
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000,
