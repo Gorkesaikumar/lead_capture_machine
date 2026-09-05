@@ -188,9 +188,8 @@ def instagram_connect(organization, code, redirect_uri, user=None):
         data = data["data"][0]
     if not isinstance(data, dict) or not isinstance(data.get("access_token"), str) or not data["access_token"].strip():
         raise OAuthFailure("token_exchange_failed")
-    account = str(data.get("user_id") or "")
-    if not re.fullmatch(r"[1-9]\d{0,31}", account):
-        raise OAuthFailure("no_instagram_account")
+    # OAuth's identifier can differ from the Professional account exposed by /me.
+    oauth_user_id = str(data.get("user_id") or "")
     token = data["access_token"]
     base = graph_base("INSTAGRAM")
     # Instagram Login must not depend on the Facebook-style user permissions edge.
@@ -216,19 +215,23 @@ def instagram_connect(organization, code, redirect_uri, user=None):
     except (ValueError, TypeError, OverflowError):
         raise OAuthFailure("token_exchange_failed") from None
     token = long_lived["access_token"]
-    profile = meta_request("get", f"{base}/{account}", token, failure="no_instagram_account", params={"fields": "user_id,username,name,profile_picture_url"})
-    if not isinstance(profile.get("username"), str) or not profile["username"].strip() or str(profile.get("user_id") or profile.get("id")) != account:
+    profile = meta_request("get", f"{base}/me", token, failure="no_instagram_account",
+        params={"fields": "id,user_id,username,name,profile_picture_url"})
+    professional_account_id = str(profile.get("user_id") or profile.get("id") or "")
+    if (not isinstance(profile.get("username"), str) or not profile["username"].strip()
+            or not re.fullmatch(r"[1-9][0-9]{0,31}", professional_account_id)):
         raise OAuthFailure("no_instagram_account")
     with transaction.atomic():
         list(IntegrationConfig.objects.select_for_update().filter(organization=organization, provider="INSTAGRAM"))
         Organization.objects.select_for_update().get(pk=organization.pk)
-        assert_available(organization, "INSTAGRAM", account)
-        subscribed = meta_request("post", f"{base}/{account}/subscribed_apps", token, failure="webhook_subscription_failed",
+        assert_available(organization, "INSTAGRAM", professional_account_id)
+        subscribed = meta_request("post", f"{base}/{professional_account_id}/subscribed_apps", token, failure="webhook_subscription_failed",
             data={"subscribed_fields": "messages,messaging_seen"})
         if subscribed.get("success") not in (True, "true"):
             raise OAuthFailure("webhook_subscription_failed")
         return save_connection(organization, user, "INSTAGRAM", token, {
-            "destination_id": account, "account_id": account, "username": profile["username"], "name": profile.get("name", ""),
+            "destination_id": professional_account_id, "account_id": professional_account_id,
+            "oauth_user_id": oauth_user_id, "username": profile["username"].strip(), "name": profile.get("name", ""),
             "profile_picture_url": profile.get("profile_picture_url", ""), "scopes": scopes,
             "requested_scopes": list(SCOPES["INSTAGRAM"]),
             "scopes_source": "token_response" if "permissions" in data else "not_returned",

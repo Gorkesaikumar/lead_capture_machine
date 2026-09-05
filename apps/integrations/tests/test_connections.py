@@ -114,8 +114,8 @@ def test_instagram_verified_success_encrypted_single_use(owner):
 @pytest.mark.parametrize("failure", ["permission_required", "token_exchange_failed", "webhook_subscription_failed", "no_instagram_account"])
 def test_instagram_failures_do_not_activate(owner, failure):
     def get(url, **kwargs):
-        if failure == "permission_required" and url.endswith("/90001"): return response({"error": {"code": 10}}, 400)
-        if failure == "no_instagram_account" and url.endswith("/90001"): return response({"id": "90001"})
+        if failure == "permission_required" and url.endswith("/me"): return response({"error": {"code": 10}}, 400)
+        if failure == "no_instagram_account" and url.endswith("/me"): return response({"id": "90001"})
         return ig_get(url, **kwargs)
     def post(url, **kwargs):
         if failure == "token_exchange_failed" and url.endswith("access_token"): return response({"error": {}}, 400)

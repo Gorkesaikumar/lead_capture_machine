@@ -24,6 +24,82 @@ def no_live_http():
         yield
 
 
+@pytest.mark.parametrize("id_field", ["user_id", "id"])
+def test_professional_identity_comes_from_me_not_oauth(owner, settings, id_field):
+    settings.META_GRAPH_API_VERSION = "v25.0"
+    oauth_id = "111111111"
+    professional_id = "17841400000000000"
+    profile = {"id": "222222222", id_field: professional_id, "username": "  mybusiness  ",
+               "name": "My Business", "profile_picture_url": "https://example.test/profile.jpg"}
+    state = ig_start(owner)
+    def get(url, **kwargs):
+        if url.endswith("/me"):
+            return response(profile)
+        if url.endswith("/access_token"):
+            return ig_get(url, **kwargs)
+        # The old account-ID lookup is the production failure being reproduced.
+        return response({"error": {"code": 100}}, 400)
+    def post(url, **kwargs):
+        if url.endswith("/access_token"):
+            return response({"access_token": "short-token", "user_id": oauth_id})
+        return ig_post(url, **kwargs)
+    with patch("requests.get", side_effect=get) as get_mock, patch("requests.post", side_effect=post) as post_mock:
+        result = ig_callback(state)
+    assert "integration_success=instagram" in result.url
+    assert [call.args[0] for call in get_mock.call_args_list] == [
+        "https://graph.instagram.com/access_token", "https://graph.instagram.com/v25.0/me",
+    ]
+    assert get_mock.call_args_list[1].kwargs["params"] == {
+        "fields": "id,user_id,username,name,profile_picture_url",
+    }
+    assert post_mock.call_args_list[1].args[0] == f"https://graph.instagram.com/v25.0/{professional_id}/subscribed_apps"
+    assert post_mock.call_args_list[1].kwargs["data"] == {"subscribed_fields": "messages,messaging_seen"}
+    config = IntegrationConfig.objects.get()
+    assert config.metadata["destination_id"] == professional_id
+    assert config.metadata["account_id"] == professional_id
+    assert config.metadata["oauth_user_id"] == oauth_id
+    assert config.metadata["username"] == "mybusiness"
+    assert config.metadata["name"] == profile["name"]
+    assert config.metadata["profile_picture_url"] == profile["profile_picture_url"]
+
+
+@pytest.mark.parametrize("professional_id", [None, "", "not-numeric", "../permissions", 0, -1, True, 1.5, {}, " 90001", "9" * 33])
+def test_invalid_professional_id_never_subscribes(owner, professional_id):
+    state = ig_start(owner)
+    def get(url, **kwargs):
+        if url.endswith("/me"):
+            return response({"user_id": professional_id, "username": "studio"})
+        return ig_get(url, **kwargs)
+    with patch("requests.get", side_effect=get), patch("requests.post", side_effect=ig_post) as post:
+        assert "error=no_instagram_account" in ig_callback(state).url
+    assert post.call_count == 1
+    assert not IntegrationConfig.objects.exists()
+
+
+@pytest.mark.parametrize("other_workspace", [True, False])
+def test_uniqueness_and_replacement_use_professional_identity(owner, other_workspace):
+    from apps.organizations.models import Organization
+    professional_id = "17841400000000000"
+    organization = (Organization.objects.create(name="Other", slug="other-identity", owner=owner[0])
+                    if other_workspace else owner[1])
+    existing = IntegrationConfig.objects.create(organization=organization, provider="INSTAGRAM",
+        metadata={"destination_id": professional_id if other_workspace else "90001"})
+    original_metadata = dict(existing.metadata)
+    state = ig_start(owner)
+    def get(url, **kwargs):
+        if url.endswith("/me"):
+            return response({"user_id": professional_id, "username": "studio"})
+        return ig_get(url, **kwargs)
+    with patch("requests.get", side_effect=get), patch("requests.post", side_effect=ig_post) as post:
+        result = ig_callback(state)
+    expected = "account_already_connected_to_another_workspace" if other_workspace else "disconnect_before_replacing"
+    assert f"error={expected}" in result.url
+    assert post.call_count == 1
+    assert IntegrationConfig.objects.count() == 1
+    existing.refresh_from_db()
+    assert existing.metadata == original_metadata
+
+
 @pytest.mark.parametrize("wrapped", [False, True])
 @pytest.mark.parametrize("grant_format", ["missing", "string", "list"])
 def test_instagram_login_full_sequence(owner, wrapped, grant_format):
@@ -53,7 +129,7 @@ def test_instagram_login_full_sequence(owner, wrapped, grant_format):
     assert [(method, url) for method, url, _ in calls] == [
         ("post", "https://api.instagram.com/oauth/access_token"),
         ("get", "https://graph.instagram.com/access_token"),
-        ("get", f"{base}/90001"),
+        ("get", f"{base}/me"),
         ("post", f"{base}/90001/subscribed_apps"),
     ]
     assert calls[0][2]["data"]["redirect_uri"] == query["redirect_uri"][0]
@@ -88,20 +164,25 @@ def test_explicit_missing_or_malformed_grants_stop_before_exchange(owner, grants
 def test_missing_or_wrong_instagram_profile_never_subscribes(owner, profile):
     state = ig_start(owner)
     def get(url, **kwargs):
-        return response(profile) if url.endswith("/90001") else ig_get(url, **kwargs)
+        return response(profile) if url.endswith("/me") else ig_get(url, **kwargs)
     with patch("requests.get", side_effect=get), patch("requests.post", side_effect=ig_post) as post:
         assert "error=no_instagram_account" in ig_callback(state).url
     assert post.call_count == 1
     assert not IntegrationConfig.objects.exists()
 
 
-@pytest.mark.parametrize("account", [None, "", "not-an-id", "../permissions", {}, 0])
-def test_invalid_account_from_code_exchange_stops_before_graph(owner, account):
+@pytest.mark.parametrize("account", [None, "", "111111111"])
+def test_oauth_id_is_only_metadata_after_valid_me_profile(owner, account):
     state = ig_start(owner)
-    with patch("requests.post", return_value=response({"access_token": "short-token", "user_id": account})), patch("requests.get") as get:
-        assert "error=no_instagram_account" in ig_callback(state).url
-    get.assert_not_called()
-    assert not IntegrationConfig.objects.exists()
+    def post(url, **kwargs):
+        if url.endswith("/access_token"):
+            return response({"access_token": "short-token", "user_id": account})
+        return ig_post(url, **kwargs)
+    with patch("requests.post", side_effect=post), patch("requests.get", side_effect=ig_get):
+        assert "integration_success=instagram" in ig_callback(state).url
+    config = IntegrationConfig.objects.get()
+    assert config.metadata["oauth_user_id"] == str(account or "")
+    assert config.metadata["destination_id"] == "90001"
 
 
 @pytest.mark.parametrize("payload", [{}, {"access_token": "", "expires_in": 5184000}, {"access_token": [], "expires_in": 5184000}, {"access_token": "long-token"}, *[{"access_token": "long-token", "expires_in": expiry} for expiry in [0, -1, "invalid", True, 1.5, 10**30]]])
@@ -118,7 +199,7 @@ def test_provider_failures_remain_safe_and_do_not_activate(owner, stage, code, e
     state = ig_start(owner)
     failure = response({"error": {"code": code, "message": "PRIVATE-PROVIDER-BODY short-token long-token test-secret authorization-code"}}, 400)
     def get(url, **kwargs):
-        if (stage == "long" and url.endswith("/access_token")) or (stage == "profile" and url.endswith("/90001")):
+        if (stage == "long" and url.endswith("/access_token")) or (stage == "profile" and url.endswith("/me")):
             return failure
         return ig_get(url, **kwargs)
     def post(url, **kwargs):
