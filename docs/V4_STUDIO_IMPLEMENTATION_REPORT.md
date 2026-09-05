@@ -155,7 +155,7 @@ Confirm App Review/access levels, business verification where required, app role
 
 ## 14. Environment variables required
 
-Supply production Django settings, `SECRET_KEY`, `ALLOWED_HOSTS`, PostgreSQL variables, Redis/Celery URLs, `FRONTEND_URL`, explicit CORS/CSRF origins, `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_GRAPH_API_VERSION` and `META_WHATSAPP_REDIRECT_URI`. SMTP variables are needed for actual recovery/verification/invitation delivery. `VITE_API_BASE_URL` is optional when using the same-host `/api/v1` proxy.
+Supply production Django settings, `SECRET_KEY`, `ALLOWED_HOSTS`, PostgreSQL variables, Redis/Celery URLs, `FRONTEND_URL`, explicit CORS/CSRF origins, `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_GRAPH_API_VERSION` and `META_WHATSAPP_CONFIG_ID`. Configure the canonical Instagram callback using `META_INSTAGRAM_REDIRECT_URI` or `META_REDIRECT_BASE_URL`; see META_PRODUCTION_SETUP.md. SMTP variables are needed for actual recovery/verification/invitation delivery. `VITE_API_BASE_URL` is optional when using the same-host `/api/v1` proxy.
 
 Normal sends use encrypted per-workspace `IntegrationConfig` credentials and destination IDs, not frontend secrets or shared global channel tokens. `configure_meta_channel` reads a temporary `META_CHANNEL_ACCESS_TOKEN` environment value. Preserve `SECRET_KEY`: existing credential encryption derives from it, so rotation requires coordinated re-encryption or reconnection. The complete variable table and configuration commands are in `MESSAGING_OPERATIONS.md` and `.env.production.example`.
 

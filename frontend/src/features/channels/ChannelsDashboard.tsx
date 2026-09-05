@@ -78,9 +78,10 @@ export function ChannelsDashboard() {
     setError(""); setBusy(channel);
     try {
       if (channel === "instagram") {
-        const { data } = await apiClient.get("/integrations/instagram/connect/");
+        const { data } = await apiClient.get("/integrations/oauth/instagram/login/");
         const url = new URL(data.url);
-        if (url.protocol !== "https:" || url.hostname !== "www.instagram.com") throw new Error("Invalid Meta authorization URL.");
+        if (url.protocol !== "https:" || url.hostname !== "www.instagram.com"
+          || url.pathname !== "/oauth/authorize" || url.username || url.password || url.port || url.hash) throw new Error("Invalid Meta authorization URL.");
         window.location.assign(url.href);
       } else {
         setSignupOpen(true); setSignup(null);

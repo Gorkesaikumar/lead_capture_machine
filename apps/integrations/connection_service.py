@@ -1,6 +1,7 @@
 """Verified Meta onboarding. Credentials and provider bodies never reach clients/logs."""
 import hashlib
 import hmac
+import ipaddress
 import logging
 import re
 import secrets
@@ -77,16 +78,53 @@ def meta_request(method, url, token=None, failure="meta_connection_failed", **kw
         raise OAuthFailure(failure) from None
 
 
+def validate_public_url(uri, path):
+    """Validate without rewriting: Meta compares the exact registered URI."""
+    try:
+        parsed = urlparse(uri)
+        host = (parsed.hostname or "").rstrip(".").lower()
+        port = parsed.port  # Also reject malformed/out-of-range ports.
+        local = host == "localhost" or host.endswith(".localhost")
+        try:
+            local = local or ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            pass
+        tunnel = any(label in ("ngrok", "ngrok-free") for label in host.split("."))
+        if (not host or parsed.username is not None or parsed.password is not None
+                or parsed.path != path or parsed.params or parsed.query or parsed.fragment
+                or "?" in uri or "#" in uri or "\\" in uri or any(c.isspace() for c in uri)
+                or (port is not None and port == 0)
+                or parsed.scheme not in ("http", "https")
+                or (parsed.scheme == "http" and not (settings.DEBUG and local))
+                or (not settings.DEBUG and (local or tunnel))):
+            raise ValueError("Invalid public URL")
+    except (ValueError, TypeError):
+        raise OAuthFailure("configuration_required") from None
+    return uri
+
+
+def frontend_return_uri():
+    origin = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+    validate_public_url(origin, "")
+    return origin + "/app/settings/channels"
+
+
 def callback_uri(request, provider):
     from django.urls import reverse
     configured = getattr(settings, f"META_{provider}_REDIRECT_URI", "")
     path = reverse(f"api_v1:integrations:oauth-{provider.lower()}-callback")
     base = getattr(settings, "META_REDIRECT_BASE_URL", "").rstrip("/")
-    uri = configured or (base + path if base else request.build_absolute_uri(path))
-    parsed = urlparse(uri)
-    if not parsed.netloc or (parsed.scheme != "https" and not (settings.DEBUG and parsed.hostname in ("localhost", "127.0.0.1"))):
+    if configured:
+        uri = configured
+    elif base:
+        validate_public_url(base, "")
+        uri = base + path
+    elif settings.DEBUG:
+        uri = request.build_absolute_uri(path)
+    else:
+        # A reverse proxy's Host header must never choose production OAuth identity.
         raise OAuthFailure("configuration_required")
-    return uri
+    return validate_public_url(uri, path)
 
 
 def create_attempt(user, organization, provider, redirect_uri=""):

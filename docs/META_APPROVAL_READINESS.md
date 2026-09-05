@@ -6,24 +6,24 @@ Application implementation and external approval are separate. No real Meta send
 
 The implemented Instagram path is **Instagram API with Instagram Login** for a professional account. Request `instagram_business_basic` and `instagram_business_manage_messages`. It sends through `graph.instagram.com/{version}/{account-id}/messages`, using the customer's Instagram-scoped ID from the inbound event. The recipient must have contacted the professional account. These names and this endpoint are documented in [Meta's official Instagram collection](https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api?entity=request-23987686-894be833-d0b6-4877-859e-c61ae6474d64).
 
-WhatsApp uses **WhatsApp Cloud API** with `whatsapp_business_messaging` and `whatsapp_business_management`. The business-asset discovery OAuth path also requests `business_management` because it queries a user-selected business portfolio's owned WABAs. Sending uses `graph.facebook.com/{version}/{phone-number-id}/messages`. Subscribe the app to its WABA through `/{waba-id}/subscribed_apps`; subscribing the callback URL alone is insufficient. See [Meta's official Cloud API collection](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api).
+WhatsApp uses **WhatsApp Cloud API** with `whatsapp_business_messaging` and `whatsapp_business_management`. Embedded Signup shares the WABA and phone, which the backend verifies before saving. Sending uses `graph.facebook.com/{version}/{phone-number-id}/messages`. Subscribe the app to its WABA through `/{waba-id}/subscribed_apps`; subscribing the callback URL alone is insufficient. See [Meta's official Cloud API collection](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api).
 
 A registered business phone number, WABA and suitable token are needed. Test accounts and allowed test recipients must be configured in the actual app dashboard. For accounts outside app roles, obtain the access level and App Review approvals required by that dashboard. Complete business verification and provider onboarding where Meta requires them for the intended deployment. This task could not inspect the app's access levels, verification status, approved scopes or test roles, so none is assumed approved.
 
-The WhatsApp login implemented here authorizes **existing owned business assets**. It asks for a business portfolio ID and fails if there is not exactly one WABA and phone to select. It is not a complete Embedded Signup or phone-registration wizard. For multiple assets, use the explicit administrator channel-configuration command with the verified phone-number ID and token. Registration and asset setup remain in Meta's dashboard.
+WhatsApp onboarding uses the Facebook SDK Embedded Signup flow, authenticated completion, authorized WABA/phone checks, registration when needed, and webhook subscription. It does not ask customers for a business portfolio ID or use a browser OAuth callback.
 
 ## Webhooks and URLs
 
-Replace `api.example.com` with the public HTTPS host. Register exact URLs, including trailing slashes.
+Use the production URLs below, including trailing slashes. See [production setup](META_PRODUCTION_SETUP.md).
 
 | Purpose | URL/path |
 |---|---|
-| Instagram webhook | `https://api.example.com/api/v1/webhooks/meta/instagram/` |
-| WhatsApp webhook | `https://api.example.com/api/v1/webhooks/meta/whatsapp/` |
-| Instagram OAuth callback | `/api/v1/integrations/oauth/instagram/callback/` |
-| WhatsApp OAuth callback | `/api/v1/integrations/oauth/whatsapp/callback/` |
-| Instagram deauthorization | `/api/v1/integrations/oauth/instagram/deauthorize/` |
-| Instagram data deletion | `/api/v1/integrations/oauth/instagram/data-deletion/` |
+| Instagram webhook | `https://studio.nextoracreations.co.in/api/v1/webhooks/meta/instagram/` |
+| WhatsApp webhook | `https://studio.nextoracreations.co.in/api/v1/webhooks/meta/whatsapp/` |
+| Instagram OAuth callback | `https://studio.nextoracreations.co.in/api/v1/integrations/oauth/instagram/callback/` |
+| WhatsApp Embedded Signup completion | `https://studio.nextoracreations.co.in/api/v1/integrations/whatsapp/complete/` (authenticated POST, not a redirect URI) |
+| Instagram deauthorization | `https://studio.nextoracreations.co.in/api/v1/integrations/oauth/instagram/deauthorize/` |
+| Instagram data deletion | `https://studio.nextoracreations.co.in/api/v1/integrations/oauth/instagram/data-deletion/` |
 | Deletion status returned by callback | `/api/v1/integrations/data-deletion/{random-code}/` |
 
 The Instagram connection requests `messages,messaging_seen` on the account subscription. WhatsApp uses the `messages` webhook field for incoming messages and message statuses. The application supports Instagram message/read events and WhatsApp incoming/status events. Confirm each subscription and available field against the app's selected API version in the Meta dashboard. Unsupported events are not interpreted as messages or automation triggers.

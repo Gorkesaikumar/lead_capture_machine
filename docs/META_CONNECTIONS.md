@@ -66,7 +66,9 @@ All paths below are relative to the configured public API origin.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/integrations/status/` | Workspace-specific Instagram, WhatsApp, and website status; no credentials |
-| GET | `/api/v1/integrations/instagram/connect/` | Admin/owner-only authorization URL |
+| GET | `/api/v1/integrations/oauth/instagram/login/` | Canonical admin/owner-only authorization URL |
+| GET | `/api/v1/integrations/instagram/connect/` | Backward-compatible start alias |
+| GET | `/api/v1/integrations/oauth/instagram/callback/` | Canonical callback registered with Meta |
 | GET | `/api/v1/integrations/instagram/callback/` | Alias for the Instagram callback |
 | POST | `/api/v1/integrations/instagram/disconnect/` | Invalidate credentials and unsubscribe |
 | GET | `/api/v1/integrations/whatsapp/connect/` | Admin/owner-only Embedded Signup config and state |
@@ -119,15 +121,15 @@ The Meta developer implementation pages returned HTTP 429 to research requests d
 
 ## Exact callback/webhook URL templates
 
-Replace `https://api.example.com` and `https://app.example.com` with the actual domains. No public domain was supplied during this task.
+Production origin: `https://studio.nextoracreations.co.in`. Register these exact URLs, including trailing slashes. See [production configuration and rollback](META_PRODUCTION_SETUP.md).
 
-- Instagram OAuth redirect registered by default: `https://api.example.com/api/v1/integrations/oauth/instagram/callback/`
-- Instagram deauthorization: `https://api.example.com/api/v1/integrations/oauth/instagram/deauthorize/`
-- Instagram data deletion: `https://api.example.com/api/v1/integrations/oauth/instagram/data-deletion/`
-- Instagram webhook: `https://api.example.com/api/v1/webhooks/meta/instagram/`
-- WhatsApp webhook: `https://api.example.com/api/v1/webhooks/meta/whatsapp/`
-- WhatsApp SDK completion: authenticated POST to `https://api.example.com/api/v1/integrations/whatsapp/complete/`; not a browser OAuth redirect URL.
-- Frontend return: `https://app.example.com/app/settings/channels`
+- Instagram OAuth redirect to register: `https://studio.nextoracreations.co.in/api/v1/integrations/oauth/instagram/callback/`
+- Instagram deauthorization: `https://studio.nextoracreations.co.in/api/v1/integrations/oauth/instagram/deauthorize/`
+- Instagram data deletion: `https://studio.nextoracreations.co.in/api/v1/integrations/oauth/instagram/data-deletion/`
+- Instagram webhook: `https://studio.nextoracreations.co.in/api/v1/webhooks/meta/instagram/`
+- WhatsApp webhook: `https://studio.nextoracreations.co.in/api/v1/webhooks/meta/whatsapp/`
+- WhatsApp SDK completion: authenticated POST to `https://studio.nextoracreations.co.in/api/v1/integrations/whatsapp/complete/`; not a browser OAuth redirect URL.
+- Frontend return: `https://studio.nextoracreations.co.in/app/settings/channels`
 
 Configure the exact redirect selected by the backend; aliases are not interchangeable during authorization code exchange. Webhooks need public HTTPS access, even when the app is running locally behind a development tunnel.
 
@@ -145,7 +147,7 @@ Configure the exact redirect selected by the backend; aliases are not interchang
 
 ## Production test and approval procedure
 
-Deploy migrations and restart workers/Beat. Configure TLS, public origins, Meta domains, webhook callbacks, privacy/deletion endpoints, a stable encryption key and secret storage. Confirm app review, advanced access, business/Tech Provider verification and WhatsApp account/number status in the dashboard. Use an eligible real customer workspace to repeat the exact inbound-to-reply checks above. Verify webhook signature rejection, callback replay rejection and revoked-token health detection before launch. Record real provider message IDs and receipts in your private acceptance log; do not publish credentials or customer content.
+For this URL-only update, follow META_PRODUCTION_SETUP.md; no migration is required. Earlier onboarding migrations must already be installed. Configure TLS, public origins, Meta domains, webhook callbacks, privacy/deletion endpoints, a stable encryption key and secret storage. Confirm app review, advanced access, business/Tech Provider verification and WhatsApp account/number status in the dashboard. Use an eligible real customer workspace to repeat the exact inbound-to-reply checks above. Verify webhook signature rejection, callback replay rejection and revoked-token health detection before launch. Record real provider message IDs and receipts in your private acceptance log; do not publish credentials or customer content.
 
 Instagram access for unrelated customer accounts and WhatsApp Embedded Signup release require the appropriate Meta review/access configuration. Development-role eligibility is not evidence of production approval. The actual approval state was not inspected, so **BLOCKED BY META APPROVAL is not established**.
 

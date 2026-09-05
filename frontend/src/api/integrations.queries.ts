@@ -59,7 +59,7 @@ export function useInstagramAuthUrl() {
   return useQuery({
     queryKey: ["integrations", "instagram-auth-url"],
     queryFn: async () => {
-      const { data } = await apiClient.get("/integrations/instagram/connect/");
+      const { data } = await apiClient.get("/integrations/oauth/instagram/login/");
       return data as { url: string };
     },
     enabled: false, // Don't fetch automatically

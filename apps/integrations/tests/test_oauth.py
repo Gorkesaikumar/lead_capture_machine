@@ -14,7 +14,7 @@ from apps.integrations.models import IntegrationConfig
 User = get_user_model()
 
 
-@override_settings(META_REDIRECT_BASE_URL="https://api.example.test", FRONTEND_URL="https://app.example.test", META_INSTAGRAM_APP_ID="", META_INSTAGRAM_APP_SECRET="")
+@override_settings(META_REDIRECT_BASE_URL="https://api.example.test", META_INSTAGRAM_REDIRECT_URI="", FRONTEND_URL="https://app.example.test", META_INSTAGRAM_APP_ID="", META_INSTAGRAM_APP_SECRET="")
 class InstagramOAuthTests(APITestCase):
 
     def setUp(self):

@@ -35,6 +35,7 @@ class InstagramOAuthStartView(AdminConnectionView):
             app_id, secret = service.app_credentials("INSTAGRAM")
             if not app_id or not secret or not settings.FRONTEND_URL:
                 raise service.OAuthFailure("configuration_required")
+            service.frontend_return_uri()
             callback = service.callback_uri(request, "INSTAGRAM")
             state = service.create_attempt(request.user, request.organization, "INSTAGRAM", callback)
             params = {"client_id": app_id, "redirect_uri": callback, "response_type": "code",
@@ -51,7 +52,10 @@ class InstagramOAuthCallbackView(APIView):
 
     @method_decorator(sensitive_variables())
     def get(self, request):
-        target = settings.FRONTEND_URL.rstrip("/")+"/app/settings/channels"
+        try:
+            target = service.frontend_return_uri()
+        except service.OAuthFailure as exc:
+            return failure_response(exc)
         try:
             attempt = service.consume_attempt(request.query_params.get("state"), "INSTAGRAM")
             code = request.query_params.get("code")

@@ -24,6 +24,7 @@ def owner(settings):
     settings.META_INSTAGRAM_APP_ID = ""
     settings.META_INSTAGRAM_APP_SECRET = ""
     settings.META_REDIRECT_BASE_URL = "https://api.example.test"
+    settings.META_INSTAGRAM_REDIRECT_URI = ""
     settings.FRONTEND_URL = "https://app.example.test"
     settings.META_WHATSAPP_CONFIG_ID = "54321"
     user = User.objects.create_user(email="connect@example.test", password="SafePass9!")

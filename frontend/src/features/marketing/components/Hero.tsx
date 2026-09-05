@@ -66,11 +66,11 @@ export default function Hero() {
       </div>
 
       {/* ── Product Mockup Visualization ──────────────────────── */}
-      <div className="relative z-10 mt-[80px] max-w-5xl mx-auto glass-panel rounded-xl p-lg shadow-2xl">
-        <div className="flex flex-col md:flex-row gap-lg items-stretch justify-between">
+      <div className="relative z-10 mt-[80px] max-w-5xl mx-auto glass-panel rounded-xl p-4 sm:p-6 lg:p-8 shadow-2xl">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_2.5rem_minmax(0,2fr)] gap-6 items-stretch">
 
           {/* Left: Source Cards */}
-          <div className="flex md:flex-col gap-md w-full md:w-1/4 justify-center md:justify-start">
+          <div className="grid min-w-0 grid-cols-1 sm:grid-cols-3 lg:grid-cols-1 gap-3 sm:gap-4">
             <SourceCard
               icon={<InstagramIcon />}
               label="Instagram"
@@ -89,26 +89,26 @@ export default function Hero() {
           </div>
 
           {/* Center: Arrows */}
-          <div className="hidden md:flex flex-col gap-[60px] items-center justify-center text-primary/40">
+          <div className="hidden lg:flex flex-col gap-[60px] items-center justify-center text-primary/40">
             <ArrowIcon />
             <ArrowIcon />
             <ArrowIcon />
           </div>
 
           {/* Right: Unified Inbox */}
-          <div className="flex-1 bg-surface-container rounded-xl border border-outline-variant overflow-hidden shadow-md">
+          <div className="min-w-0 bg-surface-container rounded-xl border border-outline-variant overflow-hidden shadow-md">
             {/* Header */}
-            <div className="bg-white border-b border-outline-variant p-md flex items-center justify-between">
-              <div className="flex items-center gap-3 font-semibold text-primary text-headline-sm">
+            <div className="bg-white border-b border-outline-variant p-4 sm:p-6 flex flex-wrap gap-3 items-center justify-between">
+              <div className="flex items-center gap-2 font-semibold text-primary text-lg sm:text-headline-sm">
                 <InboxIcon />
                 Unified Inbox
               </div>
-              <span className="bg-secondary-fixed-dim text-on-secondary-container px-3 py-1 rounded-md text-label-md shadow-sm">
+              <span className="bg-secondary-fixed-dim text-on-secondary-container px-3 py-1 rounded-md text-label-md whitespace-nowrap shadow-sm">
                 10 New Leads
               </span>
             </div>
             {/* Leads */}
-            <div className="p-md flex flex-col gap-sm bg-surface-container-low">
+            <div className="p-3 sm:p-6 flex flex-col gap-sm bg-surface-container-low">
               <InboxRow name="Sarah Jenkins" preview='"Interested in pricing..."' channel="IG" />
               <InboxRow name="Mike Torres"   preview='"Do you offer services in..."' channel="WA" />
               <InboxRow name="Emma Collins"  preview="Form Submitted" channel="Web" muted />
@@ -125,9 +125,9 @@ export default function Hero() {
 
 function SourceCard({ icon, label, sub }: { icon: React.ReactNode; label: string; sub: string }) {
   return (
-    <div className="bg-surface p-md rounded-lg border border-outline-variant flex items-center gap-4 shadow-sm w-full hover:-translate-y-0.5 transition-transform duration-200">
+    <div className="bg-surface p-4 rounded-lg border border-outline-variant flex sm:flex-col lg:flex-row items-center sm:items-start lg:items-center gap-3 shadow-sm w-full min-w-0 hover:-translate-y-0.5 transition-transform duration-200">
       <div className="shrink-0">{icon}</div>
-      <div>
+      <div className="min-w-0 break-words">
         <div className="font-semibold text-on-surface text-body-md">{label}</div>
         <div className="text-body-sm text-on-surface-variant">{sub}</div>
       </div>
@@ -137,17 +137,17 @@ function SourceCard({ icon, label, sub }: { icon: React.ReactNode; label: string
 
 function InboxRow({ name, preview, channel, muted }: { name: string; preview: string; channel: string; muted?: boolean }) {
   return (
-    <div className={`bg-white p-md rounded-lg border border-outline-variant flex justify-between items-center hover:shadow-md cursor-pointer transition-all ${muted ? 'opacity-60' : ''}`}>
-      <div className="flex items-center gap-4">
+    <div className={`bg-white p-3 sm:p-6 rounded-lg border border-outline-variant flex gap-2 justify-between items-center hover:shadow-md cursor-pointer transition-all ${muted ? 'opacity-60' : ''}`}>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-primary-fixed flex items-center justify-center shrink-0">
           <span className="text-primary font-bold text-body-sm">{name.split(' ').map(n => n[0]).join('')}</span>
         </div>
-        <div>
+        <div className="min-w-0 break-words">
           <div className="font-semibold text-on-surface text-body-md">{name}</div>
           <div className="text-body-sm text-on-surface-variant">{preview}</div>
         </div>
       </div>
-      <span className="text-label-sm text-outline px-3 py-1 bg-surface-container rounded-md font-bold shrink-0">
+      <span className="text-label-sm text-outline px-2 py-1 bg-surface-container rounded-md font-bold shrink-0">
         {channel}
       </span>
     </div>

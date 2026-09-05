@@ -26,7 +26,8 @@ Outbound flow: `POST /api/v1/conversations/{id}/send/` → validate channel, mem
 | `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` | Explicit application origins; public form submissions have a separate path-scoped CORS exception |
 | `META_APP_ID`, `META_APP_SECRET`, `META_VERIFY_TOKEN` | Meta app and signed webhook verification |
 | `META_GRAPH_API_VERSION` | Explicit supported version selected for the app; required in production |
-| `META_WHATSAPP_REDIRECT_URI` | Exact public WhatsApp OAuth callback URL |
+| `META_WHATSAPP_CONFIG_ID` | WhatsApp Embedded Signup configuration ID; no redirect URI is required |
+| `META_REDIRECT_BASE_URL`, `META_INSTAGRAM_REDIRECT_URI` | Production origin and canonical Instagram callback; see META_PRODUCTION_SETUP.md |
 | `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `EMAIL_USE_TLS`, `DEFAULT_FROM_EMAIL` | Password reset, verification and invitations via SMTP |
 | `VITE_API_BASE_URL` | Optional frontend build variable; default `/api/v1` uses the same hostname |
 

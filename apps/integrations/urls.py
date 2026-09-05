@@ -24,6 +24,7 @@ app_name = "integrations"
 
 urlpatterns = [
     path("status/", IntegrationHealthView.as_view(), name="integration-status"),
+    # Compatibility aliases. Register only oauth/instagram/callback/ with Meta.
     path("instagram/connect/", InstagramOAuthStartView.as_view(), name="instagram-connect"),
     path("instagram/callback/", InstagramOAuthCallbackView.as_view(), name="instagram-callback"),
     path("instagram/disconnect/", InstagramDisconnectView.as_view(), name="instagram-disconnect"),
@@ -39,13 +40,13 @@ urlpatterns = [
     # Outbound messaging endpoint for studio admin
     path("messages/send/", OutboundMessageDispatchView.as_view(), name="outbound-send"),
     path("health/", IntegrationHealthView.as_view(), name="integration-health"),
-    # OAuth endpoints for Meta Business Login
+    # Canonical Instagram Login endpoints used by the frontend and Meta dashboard.
     path("oauth/instagram/login/", InstagramOAuthStartView.as_view(), name="oauth-instagram-login"),
     path("oauth/instagram/callback/", InstagramOAuthCallbackView.as_view(), name="oauth-instagram-callback"),
     path("oauth/instagram/disconnect/", InstagramDisconnectView.as_view(), name="oauth-instagram-disconnect"),
     path("oauth/instagram/deauthorize/", InstagramDeauthorizeView.as_view(), name="oauth-instagram-deauthorize"),
     path("oauth/instagram/data-deletion/", InstagramDataDeletionView.as_view(), name="oauth-instagram-data-deletion"),
-    # WhatsApp OAuth endpoints
+    # WhatsApp compatibility aliases; onboarding uses Embedded Signup + POST complete.
     path("oauth/whatsapp/login/", WhatsAppOAuthStartView.as_view(), name="oauth-whatsapp-login"),
     path("oauth/whatsapp/callback/", WhatsAppOAuthCallbackView.as_view(), name="oauth-whatsapp-callback"),
     path("oauth/whatsapp/disconnect/", WhatsAppDisconnectView.as_view(), name="oauth-whatsapp-disconnect"),
